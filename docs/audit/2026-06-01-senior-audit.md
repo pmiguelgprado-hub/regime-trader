@@ -409,7 +409,8 @@ Patrón en todas las fases (advisor-confirmado): el núcleo testeable se extrae/
 | F1 | **C1** buffer frío | `TradingSystem.seed_buffers` siembra `min_train_bars+260` por símbolo antes del stream | `0ee8393` |
 | F2 | **C4** sobre-acumulación | `_rebalance_order(target/held, weights, threshold)` → delta en **acciones**; buy/sell/hold; `must_exit` liquida | `1b78ac0` |
 | F3 | **C3** sin stop | entradas live vía `submit_bracket_order`; `_stop_leg_id` captura la pata stop → `stop_order_id` (late-attach async) | `e6a8a8a` |
-| F4 | **C2+C5+C6** seguridad inerte | `on_fill` alimenta breaker, sincroniza `risk.state`, HALT→`close_all_positions`; stream de fills (daemon thread)→`on_fill`; `lock_file` live | `9323251` |
+| F4 | **C5+C6** | stream de fills (daemon thread)→`on_fill` (tracking); HALT→`close_all_positions`; `lock_file` live | `9323251` |
+| F4b | **C2** (corregido) | `_update_risk_posture` alimenta el breaker con **equity MtM por barra** (realized+unrealized) → halta en drawdown aunque NO haya fills (caso buy-and-hold). `on_fill` quedó solo tracking (evita doble conteo). El primer intento solo cableó la pata de pérdidas realizadas (fills); pasaba por un test que usaba sell-fills, no el path que importa | `bbc5e50` |
 | M3 | timeframe | `settings.yaml timeframe: 1Day` LOCKED (HMM/regímenes/breakers daily-calibrados) | `9323251` |
 | H3 | buffer O(n²) | `ingest_bar` recorta a `_buffer_cap` (=seed depth) | `ab75dc0` |
 | Dashboard | M7 + LOCK usuario | Streamlit web (`streamlit run monitoring/streamlit_app.py`) + capa de datos pura testeada; verificado booteando (health ok) | `82e81a8` |
