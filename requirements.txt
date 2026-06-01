@@ -19,8 +19,10 @@ ta==0.11.0                 # technical analysis indicators
 PyYAML==6.0.3
 python-dotenv==1.2.2
 
-# --- Terminal dashboard ---
-rich==15.0.0
+# --- Dashboards ---
+streamlit==1.58.0          # web dashboard: streamlit run monitoring/streamlit_app.py
+altair==6.1.0              # regime-colored charts (used directly by streamlit_app)
+rich==15.0.0               # legacy terminal dashboard / headless renderer
 
 # --- Testing (dev) ---
 pytest==9.0.3

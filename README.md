@@ -92,13 +92,26 @@ python main.py --backtest            # walk-forward backtest
 python main.py --stress-test         # crash/gap stress scenarios
 python main.py --train-only          # train the HMM and exit
 python main.py --dry-run             # full pipeline on history, no orders
-python main.py --dashboard           # render dashboard from last state
+python main.py --dashboard           # legacy terminal dashboard (rich)
 python main.py --live                # paper/live trading loop (paper by default)
 ```
 
 Modes are mutually exclusive; `--live` is the default if none is given.
 Shared flags: `--symbols`, `--start`, `--end`, `--compare` (backtest only),
 `--config`.
+
+### Dashboard (Streamlit web)
+
+The primary dashboard is a Streamlit web app (regime + confidence, portfolio
+value, learned regimes, risk controls, signal feed, price/regime overlay):
+
+```bash
+streamlit run monitoring/streamlit_app.py     # http://localhost:8501
+```
+
+It reads live state from `state_snapshot.json` (written by the trading loop)
+and overlay charts from `backtest_output/<symbol>/`. `python main.py --dashboard`
+keeps the older terminal renderer as a headless fallback.
 
 ## Testing
 

@@ -42,6 +42,8 @@ htmlcov/
 *.log
 logs/
 data/cache/
+state_snapshot.json               # runtime state written by the live loop
+trading_halted.lock               # peak-DD circuit-breaker lock
 backtest_results/
 backtest_output/
 tmp/

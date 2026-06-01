@@ -1,0 +1,107 @@
+"""Pure data layer for the Streamlit dashboard.
+
+No Streamlit imports here on purpose: these loaders/derivations are unit-tested
+and shared by ``monitoring/streamlit_app.py`` (the view). Everything degrades
+gracefully — a missing snapshot or backtest artifact yields empty/None, never
+an exception, so the dashboard renders placeholders instead of crashing.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any, Optional
+
+import pandas as pd
+
+DEFAULT_SNAPSHOT = "state_snapshot.json"
+DEFAULT_BASE = "backtest_output"
+
+
+def load_snapshot(path: str = DEFAULT_SNAPSHOT) -> dict[str, Any]:
+    """Load the live state snapshot written by ``TradingSystem.save_state``.
+
+    Args:
+        path: Snapshot JSON path.
+
+    Returns:
+        Parsed snapshot dict, or ``{}`` if absent/unreadable.
+    """
+    p = Path(path)
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def risk_panel(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Extract the risk-control panel fields from a snapshot.
+
+    Args:
+        snapshot: Loaded snapshot dict (possibly empty).
+
+    Returns:
+        Dict with regime, risk_state, equity_peak, daily_trades, breaker_events
+        — placeholder values when the snapshot is empty.
+    """
+    return {
+        "regime": snapshot.get("last_regime") or "—",
+        "risk_state": snapshot.get("risk_state") or "—",
+        "equity_peak": snapshot.get("equity_peak", 0.0) or 0.0,
+        "daily_trades": snapshot.get("daily_trades", 0) or 0,
+        "breaker_events": snapshot.get("breaker_events", 0) or 0,
+        "timestamp": snapshot.get("timestamp") or "—",
+    }
+
+
+def _read_csv(symbol: str, name: str, base: str) -> Optional[pd.DataFrame]:
+    """Read a per-symbol backtest CSV (timestamp-indexed) or None if absent."""
+    p = Path(base) / symbol / name
+    if not p.exists():
+        return None
+    try:
+        return pd.read_csv(p, parse_dates=[0], index_col=0)
+    except (OSError, ValueError, pd.errors.ParserError):
+        return None
+
+
+def load_regime_history(symbol: str, base: str = DEFAULT_BASE) -> Optional[pd.DataFrame]:
+    """Load the per-bar regime history for the price/regime overlay panels.
+
+    Args:
+        symbol: Ticker.
+        base: backtest_output base directory.
+
+    Returns:
+        DataFrame (regime, regime_prob, weight, returns, ...) or None if absent.
+    """
+    return _read_csv(symbol, "regime_history.csv", base)
+
+
+def load_equity_curve(symbol: str, base: str = DEFAULT_BASE) -> Optional[pd.DataFrame]:
+    """Load the equity curve for the portfolio-value panel.
+
+    Args:
+        symbol: Ticker.
+        base: backtest_output base directory.
+
+    Returns:
+        DataFrame (equity, returns) or None if absent.
+    """
+    return _read_csv(symbol, "equity_curve.csv", base)
+
+
+def regime_distribution(regime_history: Optional[pd.DataFrame]) -> pd.Series:
+    """Count bars per regime for the learned-regimes panel.
+
+    Args:
+        regime_history: Frame with a ``regime`` column (or None/empty).
+
+    Returns:
+        Series of counts indexed by regime label (empty if no data).
+    """
+    if regime_history is None or regime_history.empty or "regime" not in regime_history:
+        return pd.Series(dtype="int64")
+    return regime_history["regime"].value_counts()
