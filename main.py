@@ -163,6 +163,7 @@ class TradingSystem:
         self.last_regime = None
         self._cur_day = None
         self._cur_week = None
+        self._pending_stops: dict[str, str] = {}  # symbol -> bracket stop-leg id awaiting its fill
 
     def ingest_bar(self, symbol: str, bar: pd.DataFrame) -> None:
         """Append a new bar (1-row OHLCV frame) to a symbol's rolling buffer.
@@ -313,14 +314,37 @@ class TradingSystem:
             self._record_signal("hold", sig, held_shares, decision.modifications)
             return
         side, qty = order
-        delta_sig = dataclasses.replace(
-            decision.modified_signal,
-            direction=Direction.LONG if side == "buy" else Direction.FLAT,
-            metadata={**decision.modified_signal.metadata, "approved_shares": qty},
-        )
-        self.executor.submit_signal(delta_sig)
+        if side == "buy":
+            # C3: entries carry a protective stop (bracket); capture the stop leg
+            # so update_trailing_stops can tighten it once the fill lands.
+            delta_sig = dataclasses.replace(
+                decision.modified_signal,
+                metadata={**decision.modified_signal.metadata, "approved_shares": qty},
+            )
+            res = self.executor.submit_bracket_order(delta_sig)
+            if getattr(res, "stop_order_id", None):
+                self._pending_stops[symbol] = res.stop_order_id
+                self._adopt_pending_stop(symbol, delta_sig.stop_loss)
+        else:  # reduce / liquidate
+            delta_sig = dataclasses.replace(
+                decision.modified_signal, direction=Direction.FLAT,
+                metadata={**decision.modified_signal.metadata, "approved_shares": qty},
+            )
+            self.executor.submit_signal(delta_sig)
         self.risk.record_trade()
         self._record_signal(f"submitted_{side}", sig, qty, decision.modifications)
+
+    def _adopt_pending_stop(self, symbol, stop_level=0.0) -> None:  # pragma: no cover - live positions
+        """Attach a captured bracket stop-leg id to its tracked position once it exists."""
+        stop_id = self._pending_stops.get(symbol)
+        if not stop_id or not self.tracker:
+            return
+        pos = self.tracker.get_position(symbol)
+        if pos is not None:
+            pos.stop_order_id = stop_id
+            if stop_level:
+                pos.stop_level = stop_level
+            self._pending_stops.pop(symbol, None)
 
     def update_trailing_stops(self) -> None:  # pragma: no cover - needs live positions
         """Tighten protective stops per the current regime's strategy.
@@ -331,6 +355,8 @@ class TradingSystem:
         """
         if not self.tracker or not self.executor:
             return
+        for sym in list(self._pending_stops):  # late-attach stop ids whose fills now landed
+            self._adopt_pending_stop(sym)
         for sym, pos in (self.tracker._positions or {}).items():
             buf = self.buffers.get(sym)
             if buf is None or self.last_regime is None:

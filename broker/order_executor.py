@@ -74,6 +74,8 @@ class OrderResult:
         filled_qty: Quantity filled so far.
         avg_fill_price: Average fill price.
         message: Broker message / error detail.
+        stop_order_id: Broker id of the bracket's stop child-leg, if any
+            (needed to modify/trail the protective stop).
     """
 
     order_id: Optional[str] = None
@@ -83,6 +85,7 @@ class OrderResult:
     filled_qty: float = 0.0
     avg_fill_price: float = 0.0
     message: str = ""
+    stop_order_id: Optional[str] = None
 
 
 class OrderExecutor:
@@ -458,6 +461,29 @@ class OrderExecutor:
         return int(signal.metadata.get("approved_shares", 0))
 
     @staticmethod
+    def _stop_leg_id(order: Any) -> Optional[str]:
+        """Return the id of a bracket order's stop child-leg, if present.
+
+        Args:
+            order: An alpaca ``Order`` (or stand-in) that may carry ``legs``.
+
+        Returns:
+            The stop leg's id as a string, or None if there is no stop leg.
+        """
+        legs = (order.get("legs") if isinstance(order, dict)
+                else getattr(order, "legs", None)) or []
+        for leg in legs:
+            if isinstance(leg, dict):
+                leg_type = leg.get("order_type") or leg.get("type") or ""
+                leg_id = leg.get("id")
+            else:
+                leg_type = getattr(leg, "order_type", None) or getattr(leg, "type", "")
+                leg_id = getattr(leg, "id", None)
+            if "stop" in str(leg_type).lower():
+                return str(leg_id) if leg_id else None
+        return None
+
+    @staticmethod
     def _parse_order(order: Any, trade_id: Optional[str]) -> OrderResult:
         """Map an alpaca ``Order`` (or dict) into an :class:`OrderResult`."""
         def g(attr, default=None):
@@ -475,4 +501,5 @@ class OrderExecutor:
             filled_qty=float(g("filled_qty") or 0.0),
             avg_fill_price=float(filled_price) if filled_price else 0.0,
             message="",
+            stop_order_id=OrderExecutor._stop_leg_id(order),
         )

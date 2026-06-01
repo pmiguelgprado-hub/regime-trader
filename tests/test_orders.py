@@ -30,11 +30,17 @@ class MockTrading:
         is_limit = getattr(order_data, "limit_price", None) is not None
         status = self.limit_status if is_limit else "filled"
         qty = getattr(order_data, "qty", 0)
+        # bracket orders come back with child legs (take-profit + stop)
+        legs = None
+        if "bracket" in str(getattr(order_data, "order_class", "")).lower():
+            legs = [SimpleNamespace(id="tp-1", order_type="limit"),
+                    SimpleNamespace(id="stop-1", order_type="stop")]
         return SimpleNamespace(
             id="lim-1" if is_limit else "ord-1",
             client_order_id=getattr(order_data, "client_order_id", None),
             symbol=order_data.symbol, status=status,
             filled_qty=qty if status == "filled" else 0, filled_avg_price=100.0,
+            legs=legs,
         )
 
     def cancel_order_by_id(self, order_id):
@@ -158,3 +164,34 @@ def test_submit_signal_no_retry_when_disabled(mock_trading) -> None:
     res = ex.submit_signal(make_signal(), retry_market=False)
     assert res.status is OrderStatus.CANCELLED
     assert _market_requests(mock_trading) == []
+
+
+# ----------------------------------------------------- bracket stop (C3) ---
+def test_bracket_entry_attaches_stop_at_correct_price(executor, mock_trading) -> None:
+    """A bracket entry sends a BRACKET-class order with the signal's stop."""
+    from alpaca.trading.enums import OrderClass
+
+    executor.submit_bracket_order(make_signal(stop_loss=95.0))
+    req = mock_trading.submitted[-1]
+    assert req.order_class == OrderClass.BRACKET
+    assert float(req.stop_loss.stop_price) == 95.0
+
+
+def test_bracket_result_captures_stop_leg_id(executor, mock_trading) -> None:
+    """The stop child-leg id is captured so trailing stops can modify it."""
+    res = executor.submit_bracket_order(make_signal())
+    assert res.stop_order_id == "stop-1"
+
+
+def test_stop_leg_id_helper_finds_the_stop_leg() -> None:
+    """_stop_leg_id picks the stop leg out of a bracket's children."""
+    order = SimpleNamespace(legs=[
+        SimpleNamespace(id="tp-9", order_type="limit"),
+        SimpleNamespace(id="stop-9", order_type="stop"),
+    ])
+    assert OrderExecutor._stop_leg_id(order) == "stop-9"
+
+
+def test_stop_leg_id_none_when_no_legs() -> None:
+    """A plain (non-bracket) order has no stop leg."""
+    assert OrderExecutor._stop_leg_id(SimpleNamespace(legs=None)) is None
