@@ -174,6 +174,38 @@ class TradingSystem:
         buf = self.buffers.get(symbol)
         self.buffers[symbol] = bar if buf is None else pd.concat([buf, bar])
 
+    def seed_buffers(self, market_data) -> int:
+        """Pre-fill rolling buffers with history so features are ready on bar 1.
+
+        Without this, the live loop starts with cold buffers and
+        ``build_features`` returns empty for ~450 warmup bars (z-score 252 +
+        SMA200), making the bot a silent no-op at startup (audit C1). Seeds each
+        configured symbol with ``min_train_bars`` plus a warmup margin, fetched
+        at the configured timeframe.
+
+        Args:
+            market_data: Source exposing ``get_history(symbol, timeframe,
+                lookback_bars)`` (e.g. :class:`~data.market_data.MarketData`).
+
+        Returns:
+            The lookback (bar count) requested per symbol.
+        """
+        timeframe = self.config.get("broker", {}).get("timeframe", "1Day")
+        min_train = int(self.config.get("hmm", {}).get("min_train_bars", 504))
+        lookback = min_train + 260  # margin for z-score(252) + SMA200 warmup
+        for sym in self.symbols:
+            hist = market_data.get_history(sym, timeframe, lookback)
+            if hist is None or hist.empty:
+                if self.tlog:
+                    self.tlog.log(self.tlog.main, "backfill_warn",
+                                  f"no history for {sym}", level="WARNING")
+                continue
+            self.buffers[sym] = hist
+        if self.tlog:
+            self.tlog.log(self.tlog.main, "backfill_done",
+                          f"seeded {len(self.buffers)} buffers (~{lookback} bars)")
+        return lookback
+
     def process_symbol(self, symbol: str) -> list[tuple]:
         """Run the decision pipeline for one symbol's current buffer.
 
@@ -556,6 +588,7 @@ def run_live(config: dict[str, Any], credentials: dict[str, str],
     system = TradingSystem(config, hmm, orch, risk, fe, executor, tracker,
                            tlogger=tlog, alerts=alerts, dry_run=dry_run)
     system.load_state()
+    system.seed_buffers(md)  # C1: warm buffers so features are ready on bar 1
     tlog.log(tlog.main, "system_online", "System online")
 
     # --- SHUTDOWN handlers: keep positions (stops in place), save state ---
