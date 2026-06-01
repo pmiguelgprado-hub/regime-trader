@@ -358,3 +358,42 @@ _Vídeo: "build a fully automated trading bot with Claude Code" (~34 min, captio
 
 ## Nota de alcance
 Auditoría hecha con **el código como fuente primaria**; cotejada además contra el vídeo (sección 8). Si quieres, hago una pasada de conformidad **vídeo vs código** para detectar fases del tutorial que quedaron a medias respecto a lo prometido. Falta contexto externo en: entitlement real de tu cuenta Alpaca (H6) y la intención de diseño exacta del techo de exposición (H4) — ambos requieren tu confirmación.
+
+---
+
+## 9. Diagnóstico del gap de tests (102 vs 134) — Fase 0 (2026-06-02)
+
+_Encargo de Fase 0: **diagnosticar, no fabricar**. No se inventó ningún test para cuadrar el número._
+
+### Datos (build actual, py3.14)
+`pytest --co` → **102 tests**, repartidos por módulo:
+
+| Archivo | Tests | Fase cubierta |
+|---|---:|---|
+| `test_hmm.py` | 12 | Brain (HMM) |
+| `test_strategies.py` | 12 | Allocation |
+| `test_orchestration.py` | 9 | Allocation/main pipeline |
+| `test_risk_validate.py` | 18 | Risk (veto/sizing) |
+| `test_risk.py` | 10 | Risk (breakers unitarios) |
+| `test_backtest.py` | 11 | Backtest |
+| `test_lookup_ahead.py` | 6 | Backtest (no-leakage) |
+| `test_orders.py` | 9 | Broker (executor) |
+| `test_broker.py` | 9 | Broker (client/tracker vs mock) |
+| `test_monitoring.py` | 6 | Monitoring |
+| **Total** | **102** | |
+
+### Conclusión: granularidad/forma del tutorial, **no** cobertura perdida de una pieza testeada
+1. **No hay lista canónica de los 134 del vídeo** que cotejar test a test. El número del vídeo es el contador acumulado mientras construye; no es un manifiesto. Cualquier "cuadre" exacto sería fabricado → no se hace.
+2. **Las 8 fases tienen archivo de test propio con cobertura real.** El delta de ~32 no es "falta el test de un módulo que existe y está sin probar"; es:
+   - **(a) Granularidad/conteo.** El vídeo suma iteraciones de test según itera; el build consolidó casos (p.ej. parametrizaciones que cuentan como 1).
+   - **(b) Dashboard Streamlit no portado.** El vídeo construye un dashboard **Streamlit** (con sus tests); el build lo cambió por un dashboard **rich de terminal** (`test_monitoring.py` = solo 6). Los tests del dashboard web del tutorial no existen aquí porque el componente no existe aquí (ver §8, M7).
+3. **El hueco de cobertura real NO son 32 tests sueltos: es el lazo en vivo.** `main.py` tiene **5 regiones `# pragma: no cover`** —`run_live`, `run_stream`, la rama de orden en vivo, `_portfolio_state` de broker, `update_trailing_stops`— y son **exactamente** donde viven C1–C6. Ningún test unitario extra sobre módulos ya probados cierra ese hueco; lo cierran los **tests de integración del lazo simulado** que añaden las fases de reparación (F1+).
+
+**Implicación:** el gap 102↔134 es ruido de conteo + el dashboard no portado. La señal de cobertura que importa es la del lazo en vivo (pragma-no-cover = C1–C6), y se ataca con las fases de reparación, no fabricando tests para igualar 134.
+
+### Estado Fase 0 (2026-06-02)
+- **H2** README → flags reales (`--backtest`/`--live`/…); todos los comandos casan con `--help`. ✅
+- **M6** `requirements.txt` pineado al venv test-green; fuera `alpaca-trade-api` (legacy) + `websocket-client`/`schedule` (no importados, no instalados). ✅
+- **M1** `core/signal_generator.py` borrado (esqueleto muerto, 0 imports). Conteo de tests sin cambio (102 → confirma que estaba muerto). ✅
+- **Gap tests** diagnosticado (esta §9), sin fabricación. ✅
+- `pytest`: **102 passed** tras los cambios.
