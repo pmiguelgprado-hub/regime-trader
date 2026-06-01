@@ -1,0 +1,55 @@
+# --- Secrets / credentials ---
+.env
+credentials.yaml
+config/credentials.yaml
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.installed.cfg
+*.egg
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+ENV/
+
+# --- Testing / coverage ---
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.cache/
+
+# --- Type checkers / linters ---
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+
+# --- Notebooks ---
+.ipynb_checkpoints/
+
+# --- Logs / data / artifacts ---
+*.log
+logs/
+data/cache/
+backtest_results/
+backtest_output/
+tmp/
+*.pkl
+*.joblib
+
+# --- OS / editor ---
+.DS_Store
+.idea/
+.vscode/
+*.swp

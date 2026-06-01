@@ -1,0 +1,104 @@
+# ============================================================================
+# regime-trader — settings.yaml
+# All configurable parameters, grouped by section, with defaults and comments.
+# Override per-environment as needed. Secrets go in .env / credentials.yaml.
+# ============================================================================
+
+# ---------------------------------------------------------------------------
+# broker — connection + tradable universe
+# ---------------------------------------------------------------------------
+broker:
+  paper_trading: true               # true = Alpaca paper account, false = live
+  symbols:                          # tradable universe
+    - SPY
+    - QQQ
+    - AAPL
+    - MSFT
+    - AMZN
+    - GOOGL
+    - NVDA
+    - META
+    - TSLA
+    - AMD
+  timeframe: 1Day                   # bar size: 1Min, 5Min, 15Min, 1Hour, 1Day
+
+# ---------------------------------------------------------------------------
+# hmm — Hidden Markov Model regime detection
+# ---------------------------------------------------------------------------
+hmm:
+  n_candidates: [3, 4, 5]           # candidate state counts (labels defined 3..7); BIC selects
+  n_init: 10                        # random restarts per candidate (best log-likelihood kept)
+  covariance_type: full             # full | diag | tied | spherical
+  min_covar: 0.001                  # covariance floor (full-cov regularization)
+  covars_prior: 0.01                # inverse-Wishart prior weight (full-cov regularization)
+  n_iter: 100                       # max EM iterations per fit
+  min_train_bars: 504               # min USABLE bars after feature warmup (~2y daily)
+  stability_bars: 3                 # consecutive bars in new regime before switch confirmed
+  flicker_window: 20                # lookback window for flicker detection
+  flicker_threshold: 4              # max regime changes in window before flagged unstable
+  min_confidence: 0.55              # min posterior prob to act on a regime label
+
+# ---------------------------------------------------------------------------
+# strategy — volatility-regime-based allocation
+# ---------------------------------------------------------------------------
+strategy:
+  low_vol_allocation: 0.95          # equity exposure in low-vol regime
+  mid_vol_allocation_trend: 0.95    # mid-vol regime, trend present (price>EMA50)
+  mid_vol_allocation_no_trend: 0.60 # mid-vol regime, trend broken (price<EMA50)
+  high_vol_allocation: 0.60         # equity exposure in high-vol regime (LONG, never short)
+  low_vol_leverage: 1.25            # leverage applied in low-vol regime
+  rebalance_threshold: 0.10         # drift (frac) from target before rebalance triggers
+  min_confidence: 0.55              # below this regime prob -> uncertainty mode
+  uncertainty_size_mult: 0.50       # size multiplier in uncertainty mode (also forces 1.0x lev)
+  ema_period: 50                    # trend filter EMA period
+  atr_period: 14                    # ATR period for stops
+  atr_mult_low: 3.0                 # low-vol stop: price - 3*ATR floor
+  ema_stop_atr_low: 0.5             # low-vol stop: EMA50 - 0.5*ATR
+  ema_stop_atr_mid: 0.5             # mid-vol stop: EMA50 - 0.5*ATR
+  ema_stop_atr_high: 1.0            # high-vol stop: EMA50 - 1.0*ATR (wider)
+
+# ---------------------------------------------------------------------------
+# risk — position sizing, leverage caps, drawdown circuit breakers
+# ---------------------------------------------------------------------------
+risk:
+  max_risk_per_trade: 0.01          # frac of equity risked per trade (1%)
+  max_exposure: 0.80                # max gross exposure (frac of equity)
+  max_leverage: 1.25                # hard leverage ceiling
+  max_single_position: 0.15         # max weight of any single symbol
+  max_concurrent: 5                 # max simultaneous open positions
+  max_daily_trades: 20              # daily order cap (overtrading guard)
+  daily_dd_reduce: 0.02             # daily drawdown -> reduce sizing (2%)
+  daily_dd_halt: 0.03               # daily drawdown -> halt trading (3%)
+  weekly_dd_reduce: 0.05            # weekly drawdown -> reduce sizing (5%)
+  weekly_dd_halt: 0.07              # weekly drawdown -> halt trading (7%)
+  max_dd_from_peak: 0.10            # max drawdown from equity peak before full halt (10%)
+  # --- position-level + order validation (Phase 5) ---
+  max_sector_exposure: 0.30         # max gross exposure in one sector (needs sector_map)
+  corr_reduce: 0.70                 # 60d correlation above this -> halve size
+  corr_reject: 0.85                 # correlation above this -> reject trade
+  corr_window: 60                   # rolling correlation lookback (trading days)
+  max_spread_pct: 0.005             # reject if bid-ask spread > 0.5%
+  duplicate_window_sec: 60          # block same symbol+direction within N seconds
+  min_position_usd: 100             # reject positions smaller than this notional
+  overnight_gap_mult: 3.0           # overnight stop assumed to gap through 3x
+  overnight_gap_budget: 0.02        # overnight 3x-gap loss capped at 2% of equity
+  reduce_size_mult: 0.50            # size multiplier when a soft breaker is active
+  lock_file: null                   # peak-DD halt lock path (null = disabled; live sets a path)
+
+# ---------------------------------------------------------------------------
+# backtest — walk-forward allocation backtester
+# ---------------------------------------------------------------------------
+backtest:
+  slippage_pct: 0.0005              # per-fill slippage assumption (5 bps)
+  initial_capital: 100000           # starting equity (USD)
+  train_window: 504                 # in-sample bars per fold (~2y); must be >= hmm.min_train_bars (252 cannot train the HMM)
+  test_window: 126                  # out-of-sample bars per fold (~6mo)
+  step_size: 126                    # walk-forward step between folds
+  risk_free_rate: 0.045             # annual risk-free rate for Sharpe/Sortino (4.5%)
+
+# ---------------------------------------------------------------------------
+# monitoring — dashboard + alerts
+# ---------------------------------------------------------------------------
+monitoring:
+  dashboard_refresh_seconds: 5      # terminal dashboard refresh interval
+  alert_rate_limit_minutes: 15      # min minutes between repeated alerts of same type

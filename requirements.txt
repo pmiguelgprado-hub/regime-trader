@@ -1,0 +1,31 @@
+# regime-trader — runtime dependencies
+# Pin versions before going live; ranges kept loose for initial scaffolding.
+
+# --- Regime detection / ML ---
+hmmlearn
+scikit-learn
+
+# --- Broker / market data ---
+alpaca-trade-api
+alpaca-py
+websocket-client
+yfinance            # keyless historical data source for backtests
+
+# --- Data / numerics ---
+pandas
+numpy
+scipy
+ta                  # technical analysis indicators
+
+# --- Config / env ---
+pyyaml
+python-dotenv
+
+# --- Scheduling ---
+schedule
+
+# --- Terminal dashboard ---
+rich
+
+# --- Testing (dev) ---
+pytest
