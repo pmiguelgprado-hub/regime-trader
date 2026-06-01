@@ -397,3 +397,29 @@ _Encargo de Fase 0: **diagnosticar, no fabricar**. No se inventó ningún test p
 - **M1** `core/signal_generator.py` borrado (esqueleto muerto, 0 imports). Conteo de tests sin cambio (102 → confirma que estaba muerto). ✅
 - **Gap tests** diagnosticado (esta §9), sin fabricación. ✅
 - `pytest`: **102 passed** tras los cambios.
+
+---
+
+## 10. Estado reparación F1–F5 + dashboard (2026-06-02)
+
+Patrón en todas las fases (advisor-confirmado): el núcleo testeable se extrae/usa con TDD; el call-site en `run_live`/`run_stream` queda `# pragma: no cover` (no testeable sin broker). **`pytest`: 102 → 129 passed** tras toda la tanda. Commits atómicos por hallazgo.
+
+| Fase | Hallazgo | Fix (núcleo testeado) | Commit |
+|---|---|---|---|
+| F1 | **C1** buffer frío | `TradingSystem.seed_buffers` siembra `min_train_bars+260` por símbolo antes del stream | `0ee8393` |
+| F2 | **C4** sobre-acumulación | `_rebalance_order(target/held, weights, threshold)` → delta en **acciones**; buy/sell/hold; `must_exit` liquida | `1b78ac0` |
+| F3 | **C3** sin stop | entradas live vía `submit_bracket_order`; `_stop_leg_id` captura la pata stop → `stop_order_id` (late-attach async) | `e6a8a8a` |
+| F4 | **C2+C5+C6** seguridad inerte | `on_fill` alimenta breaker, sincroniza `risk.state`, HALT→`close_all_positions`; stream de fills (daemon thread)→`on_fill`; `lock_file` live | `9323251` |
+| M3 | timeframe | `settings.yaml timeframe: 1Day` LOCKED (HMM/regímenes/breakers daily-calibrados) | `9323251` |
+| H3 | buffer O(n²) | `ingest_bar` recorta a `_buffer_cap` (=seed depth) | `ab75dc0` |
+| Dashboard | M7 + LOCK usuario | Streamlit web (`streamlit run monitoring/streamlit_app.py`) + capa de datos pura testeada; verificado booteando (health ok) | `82e81a8` |
+
+### Pendientes — NO código autónomo (requieren decisión/credenciales del usuario)
+- **R1 (edge):** la estrategia sigue sin edge (6.9% vs 69.9% buy-hold). Bloquea **dinero real**, no paper. No es fix de código → investigación.
+- **H6 (entitlement):** que la cuenta Alpaca devuelva barras en tiempo real al timeframe elegido. No verificable desde el código; requiere la cuenta.
+- **H4 (techo leverage):** `check_exposure` capa efectiva a 1.0x (`max_exposure*max_leverage`), `low_vol_leverage 1.25` muerto. La **intención de diseño** (¿1.25x alcanzable?) es decisión de riesgo del usuario — NO se tocó para no inventar política.
+- **H5 (async + reconexión):** el pipeline corre síncrono en el handler del socket; los fills van en daemon thread sin reconexión con backoff. No testeable sin broker → diferido y marcado como scaffolding.
+- **M4/M5 (multi-activo):** chequeo de correlación inerte en vivo (sin `price_history`) y caps multi-activo nunca backtesteados. **Lean: restringir live a 1 símbolo** hasta validar multi-activo; la correlación es moot en single-asset.
+
+### Veredicto actualizado
+Con C1–C6 cableados y testeados, el sistema es **candidato a paper** (ya no "peligroso e inútil"). **Sigue NO listo para dinero real** y el paso a paper está gateado por: decisión H4 (riesgo), confirmación H6 (datos), y un **smoke real contra Alpaca** (el trade real del vídeo nunca se ejecutó en el build). "Code-complete" ≠ "paper-ready" ≠ "rentable".
