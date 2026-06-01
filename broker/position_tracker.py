@@ -237,19 +237,24 @@ class PositionTracker:
         self.reconcile()
         return snap
 
-    def subscribe_fills(self, regime_provider=None) -> None:  # pragma: no cover - live socket
+    def subscribe_fills(self, regime_provider=None, sink=None) -> None:  # pragma: no cover - live socket
         """Subscribe to the broker trade-update stream and route fills.
 
         Thin plumbing only: each broker trade-update is normalized into a
-        :class:`FillEvent` and passed to :meth:`on_fill`. Not unit-tested (live
-        WebSocket); the handler it calls is.
+        :class:`FillEvent` and passed to ``sink`` (defaults to :meth:`on_fill`).
+        Live trading routes ``sink`` to ``TradingSystem.on_fill`` so the fill
+        also feeds the circuit breaker. Not unit-tested (live WebSocket); the
+        handlers it calls are.
 
         Args:
             regime_provider: Optional zero-arg callable returning the current
                 regime label to tag fills with.
+            sink: Optional callable receiving the :class:`FillEvent` (defaults to
+                this tracker's :meth:`on_fill`).
         """
         from alpaca.trading.stream import TradingStream
 
+        sink = sink or self.on_fill
         stream = TradingStream(self.client.config.api_key,
                                self.client.config.secret_key,
                                paper=self.client.config.paper)
@@ -258,7 +263,7 @@ class PositionTracker:
             if str(getattr(data, "event", "")) not in ("fill", "partial_fill"):
                 return
             order = data.order
-            self.on_fill(FillEvent(
+            sink(FillEvent(
                 symbol=order.symbol, qty=float(data.qty or order.filled_qty),
                 price=float(data.price or order.filled_avg_price),
                 side=str(order.side).split(".")[-1].lower(),

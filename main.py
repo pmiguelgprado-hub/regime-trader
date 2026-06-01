@@ -24,6 +24,7 @@ import json
 import logging
 import os
 import signal as signal_mod
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -346,6 +347,38 @@ class TradingSystem:
                 pos.stop_level = stop_level
             self._pending_stops.pop(symbol, None)
 
+    def on_fill(self, fill, equity=None) -> None:
+        """Handle a live fill: feed the breaker, sync posture, liquidate on HALT.
+
+        Routes the fill through the tracker (realized P&L + position update),
+        updates the latching circuit breaker, mirrors the breaker posture into
+        ``RiskManager.state`` (so sizing and the veto reflect REDUCED/HALTED),
+        advances holding periods, and — on a HALT — liquidates everything and
+        stops opening (audit C2 + C5 + C6).
+
+        Args:
+            fill: Normalized :class:`~broker.position_tracker.FillEvent`.
+            equity: Account equity for this fill (fetched from the broker when
+                omitted in live mode).
+        """
+        from core.risk_manager import PortfolioState, RiskState
+
+        if not self.tracker:
+            return
+        if equity is None:  # pragma: no cover - live broker
+            equity = (self.tracker.refresh().equity
+                      if not self.dry_run else self.initial_capital)
+        ps = PortfolioState(equity=equity, positions=self.tracker.to_risk_positions(),
+                            circuit_breaker_status=self.risk.state)
+        self.tracker.apply_fill_to_risk(fill, ps, self.risk.breaker)
+        self.risk.state = self.risk.breaker.state   # latching posture -> sizing/veto
+        self.tracker.advance_bar()
+        if self.risk.breaker.state is RiskState.HALTED and self.executor:
+            self.executor.close_all_positions()      # C6: flatten on halt
+            if self.alerts:
+                self.alerts.send("circuit_breaker_halt",
+                                 "HALTED: liquidating all positions")
+
     def update_trailing_stops(self) -> None:  # pragma: no cover - needs live positions
         """Tighten protective stops per the current regime's strategy.
 
@@ -667,6 +700,8 @@ def run_live(config: dict[str, Any], credentials: dict[str, str],
     hmm = HMMEngine.load(model_path)
     alerts.hmm_retrained(hmm.n_regimes, hmm.metadata.bic if hmm.metadata else 0.0)
 
+    # C2: enable the persistent peak-DD lock in live (backtests keep it null)
+    risk_cfg.lock_file = risk_cfg.lock_file or "logs/trading_halted.lock"
     risk = RiskManager(risk_cfg)
     risk._equity_peak = account["equity"]
     orch = StrategyOrchestrator(strat_cfg, hmm.regime_info)
@@ -678,6 +713,18 @@ def run_live(config: dict[str, Any], credentials: dict[str, str],
                            tlogger=tlog, alerts=alerts, dry_run=dry_run)
     system.load_state()
     system.seed_buffers(md)  # C1: warm buffers so features are ready on bar 1
+
+    # C5: route the broker fill stream into on_fill (feeds breaker + liquidation)
+    def _regime_label():
+        r = system.last_regime
+        return (r.label.value if r and hasattr(r.label, "value") else None)
+
+    fills_thread = threading.Thread(
+        target=lambda: tracker.subscribe_fills(regime_provider=_regime_label,
+                                               sink=system.on_fill),
+        daemon=True, name="fills-stream",
+    )
+    fills_thread.start()
     tlog.log(tlog.main, "system_online", "System online")
 
     # --- SHUTDOWN handlers: keep positions (stops in place), save state ---

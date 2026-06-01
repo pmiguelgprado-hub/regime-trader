@@ -20,7 +20,9 @@ broker:
     - META
     - TSLA
     - AMD
-  timeframe: 1Day                   # bar size: 1Min, 5Min, 15Min, 1Hour, 1Day
+  timeframe: 1Day                   # LOCKED daily (M3): HMM + vol regimes + breakers
+                                    #   are all daily-calibrated. Do NOT switch to
+                                    #   intraday without re-validating the whole stack.
 
 # ---------------------------------------------------------------------------
 # hmm — Hidden Markov Model regime detection
