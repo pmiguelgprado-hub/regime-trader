@@ -29,13 +29,13 @@ circuit breakers, and executes via Alpaca (paper by default).
 
 ```bash
 # walk-forward backtest on SPY (writes CSVs to backtest_output/SPY/)
-python main.py backtest --symbols SPY --start 2019-01-01 --end 2024-12-31
+python main.py --backtest --symbols SPY --start 2019-01-01 --end 2024-12-31
 
 # add benchmarks: buy-and-hold, 200-SMA trend, random (100 seeds)
-python main.py backtest --symbols SPY --start 2019-01-01 --end 2024-12-31 --compare
+python main.py --backtest --symbols SPY --start 2019-01-01 --end 2024-12-31 --compare
 
 # crash / gap / regime-misclassification stress probes
-python main.py backtest --stress-test
+python main.py --stress-test
 ```
 
 ## Architecture
@@ -43,13 +43,13 @@ python main.py backtest --stress-test
 ```
 regime-trader/
 ├── config/         # settings.yaml (all params) + credentials example
-├── core/           # HMM engine, regime strategies, risk manager, signals
+├── core/           # HMM engine, regime strategies, risk manager
 ├── broker/         # Alpaca client, order executor, position tracker
 ├── data/           # market data fetching, feature engineering (causal)
 ├── monitoring/     # structured logging, terminal dashboard, alerts
 ├── backtest/       # walk-forward backtester, performance, stress tests
 ├── tests/          # hmm, look-ahead, strategies, risk, orders
-└── main.py         # entry point (live | backtest)
+└── main.py         # entry point (--live | --backtest | --dry-run | ...)
 ```
 
 ### Pipeline
@@ -58,12 +58,12 @@ regime-trader/
    feature matrix.
 2. **hmm_engine** detects the current regime (with confidence, stability, and
    flicker filtering).
-3. **regime_strategies** maps regime + trend → target allocation/leverage.
+3. **regime_strategies** maps regime + trend → target allocation/leverage
+   and emits the concrete signals.
 4. **risk_manager** sizes positions and enforces exposure/leverage/drawdown
    limits.
-5. **signal_generator** combines the above into concrete `TradeSignal`s.
-6. **broker** executes orders and tracks positions/P&L.
-7. **monitoring** logs, renders a live dashboard, and fires alerts.
+5. **broker** executes orders and tracks positions/P&L.
+6. **monitoring** logs, renders a live dashboard, and fires alerts.
 
 ## Setup
 
@@ -88,9 +88,17 @@ Broker secrets come from `.env` (`ALPACA_API_KEY`, `ALPACA_SECRET_KEY`,
 ## Usage
 
 ```bash
-python main.py --mode backtest      # walk-forward backtest
-python main.py --mode live          # paper/live trading (paper by default)
+python main.py --backtest            # walk-forward backtest
+python main.py --stress-test         # crash/gap stress scenarios
+python main.py --train-only          # train the HMM and exit
+python main.py --dry-run             # full pipeline on history, no orders
+python main.py --dashboard           # render dashboard from last state
+python main.py --live                # paper/live trading loop (paper by default)
 ```
+
+Modes are mutually exclusive; `--live` is the default if none is given.
+Shared flags: `--symbols`, `--start`, `--end`, `--compare` (backtest only),
+`--config`.
 
 ## Testing
 
