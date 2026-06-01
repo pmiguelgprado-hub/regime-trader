@@ -165,6 +165,9 @@ class TradingSystem:
         self._cur_day = None
         self._cur_week = None
         self._pending_stops: dict[str, str] = {}  # symbol -> bracket stop-leg id awaiting its fill
+        # Rolling-buffer cap (H3): min_train_bars + z-score(252)/SMA200 warmup margin.
+        # Bounds memory and per-bar feature cost; also the live backfill depth.
+        self._buffer_cap = int(config.get("hmm", {}).get("min_train_bars", 504)) + 260
 
     def ingest_bar(self, symbol: str, bar: pd.DataFrame) -> None:
         """Append a new bar (1-row OHLCV frame) to a symbol's rolling buffer.
@@ -174,7 +177,8 @@ class TradingSystem:
             bar: Single-row OHLCV DataFrame indexed by timestamp.
         """
         buf = self.buffers.get(symbol)
-        self.buffers[symbol] = bar if buf is None else pd.concat([buf, bar])
+        merged = bar if buf is None else pd.concat([buf, bar])
+        self.buffers[symbol] = merged.tail(self._buffer_cap)  # H3: bound the rolling window
 
     def seed_buffers(self, market_data) -> int:
         """Pre-fill rolling buffers with history so features are ready on bar 1.
@@ -193,8 +197,7 @@ class TradingSystem:
             The lookback (bar count) requested per symbol.
         """
         timeframe = self.config.get("broker", {}).get("timeframe", "1Day")
-        min_train = int(self.config.get("hmm", {}).get("min_train_bars", 504))
-        lookback = min_train + 260  # margin for z-score(252) + SMA200 warmup
+        lookback = self._buffer_cap  # same depth the rolling buffer is capped to (H3)
         for sym in self.symbols:
             hist = market_data.get_history(sym, timeframe, lookback)
             if hist is None or hist.empty:
