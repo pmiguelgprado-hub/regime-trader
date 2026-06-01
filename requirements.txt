@@ -1,31 +1,26 @@
 # regime-trader — runtime dependencies
-# Pin versions before going live; ranges kept loose for initial scaffolding.
+# Pinned to the versions in the test-green venv (py3.14, 102 tests passing).
 
 # --- Regime detection / ML ---
-hmmlearn
-scikit-learn
+hmmlearn==0.3.3
+scikit-learn==1.8.0
 
 # --- Broker / market data ---
-alpaca-trade-api
-alpaca-py
-websocket-client
-yfinance            # keyless historical data source for backtests
+alpaca-py==0.43.4          # the SDK actually used (alpaca-trade-api was legacy/dead)
+yfinance==1.4.1            # keyless historical data source for backtests
 
 # --- Data / numerics ---
-pandas
-numpy
-scipy
-ta                  # technical analysis indicators
+pandas==3.0.3
+numpy==2.4.6
+scipy==1.17.1
+ta==0.11.0                 # technical analysis indicators
 
 # --- Config / env ---
-pyyaml
-python-dotenv
-
-# --- Scheduling ---
-schedule
+PyYAML==6.0.3
+python-dotenv==1.2.2
 
 # --- Terminal dashboard ---
-rich
+rich==15.0.0
 
 # --- Testing (dev) ---
-pytest
+pytest==9.0.3
