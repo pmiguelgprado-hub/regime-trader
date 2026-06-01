@@ -165,6 +165,7 @@ class TradingSystem:
         self._cur_day = None
         self._cur_week = None
         self._pending_stops: dict[str, str] = {}  # symbol -> bracket stop-leg id awaiting its fill
+        self._last_equity: Optional[float] = None  # for per-bar MtM return fed to the breaker
         # Rolling-buffer cap (H3): min_train_bars + z-score(252)/SMA200 warmup margin.
         # Bounds memory and per-bar feature cost; also the live backfill depth.
         self._buffer_cap = int(config.get("hmm", {}).get("min_train_bars", 504)) + 260
@@ -276,6 +277,8 @@ class TradingSystem:
             [symbol], {symbol: buf}, regime, is_flickering=flicker
         )
         ps = self._portfolio_state(regime)
+        self._update_risk_posture(ps.equity, regime)   # C2: feed MtM drawdown to the breaker
+        ps.circuit_breaker_status = self.risk.state     # so validate_signal sees the fresh posture
         out: list[tuple] = []
         for sig in signals:
             decision = self.risk.validate_signal(sig, ps)
@@ -350,37 +353,57 @@ class TradingSystem:
                 pos.stop_level = stop_level
             self._pending_stops.pop(symbol, None)
 
-    def on_fill(self, fill, equity=None) -> None:
-        """Handle a live fill: feed the breaker, sync posture, liquidate on HALT.
+    def on_fill(self, fill) -> None:
+        """Apply a live fill to position/P&L tracking only (C5).
 
-        Routes the fill through the tracker (realized P&L + position update),
-        updates the latching circuit breaker, mirrors the breaker posture into
-        ``RiskManager.state`` (so sizing and the veto reflect REDUCED/HALTED),
-        advances holding periods, and — on a HALT — liquidates everything and
-        stops opening (audit C2 + C5 + C6).
+        The circuit breaker is fed from **broker equity once per bar** (see
+        :meth:`_update_risk_posture`), which already reflects realized *and*
+        unrealized P&L. Feeding realized P&L here as well would double-count, so
+        fills update the tracker (positions, average price, realized P&L) but do
+        not touch the breaker.
 
         Args:
             fill: Normalized :class:`~broker.position_tracker.FillEvent`.
-            equity: Account equity for this fill (fetched from the broker when
-                omitted in live mode).
         """
-        from core.risk_manager import PortfolioState, RiskState
+        if self.tracker:
+            self.tracker.on_fill(fill)
 
-        if not self.tracker:
-            return
-        if equity is None:  # pragma: no cover - live broker
-            equity = (self.tracker.refresh().equity
-                      if not self.dry_run else self.initial_capital)
-        ps = PortfolioState(equity=equity, positions=self.tracker.to_risk_positions(),
-                            circuit_breaker_status=self.risk.state)
-        self.tracker.apply_fill_to_risk(fill, ps, self.risk.breaker)
-        self.risk.state = self.risk.breaker.state   # latching posture -> sizing/veto
-        self.tracker.advance_bar()
-        if self.risk.breaker.state is RiskState.HALTED and self.executor:
-            self.executor.close_all_positions()      # C6: flatten on halt
+    def _update_risk_posture(self, equity, regime=None) -> bool:
+        """Feed mark-to-market equity into the breaker once per bar (C2).
+
+        Computes this bar's return from the running equity, latches the circuit
+        breaker (daily/weekly accumulation + peak-drawdown), mirrors the posture
+        into ``RiskManager.state`` so sizing/veto honor REDUCED/HALTED, and — on
+        a HALT — liquidates everything (C6). Drawdown therefore halts trading
+        even with no fills happening (the long-only hold case).
+
+        Args:
+            equity: Current account equity (realized + unrealized).
+            regime: Active regime (audit tagging only).
+
+        Returns:
+            True if the breaker is HALTED after this update.
+        """
+        from core.risk_manager import RiskState
+
+        if equity and equity > 0:
+            prev = self._last_equity
+            bar_ret = (equity / prev - 1.0) if prev else 0.0
+            self._last_equity = equity
+            label = (regime.label.value if regime and hasattr(regime.label, "value")
+                     else None)
+            self.risk.breaker.update(pnl=bar_ret, equity=equity, regime=label)
+            self.risk.state = self.risk.breaker.state   # latching posture -> sizing/veto
+        if self.tracker:
+            self.tracker.advance_bar()
+        if self.risk.breaker.state is RiskState.HALTED:
+            if self.executor:
+                self.executor.close_all_positions()     # C6: flatten on halt
             if self.alerts:
                 self.alerts.send("circuit_breaker_halt",
                                  "HALTED: liquidating all positions")
+            return True
+        return False
 
     def update_trailing_stops(self) -> None:  # pragma: no cover - needs live positions
         """Tighten protective stops per the current regime's strategy.
