@@ -206,6 +206,37 @@ class TradingSystem:
                           f"seeded {len(self.buffers)} buffers (~{lookback} bars)")
         return lookback
 
+    @staticmethod
+    def _rebalance_order(
+        target_shares: int, held_shares: int,
+        target_weight: float, current_weight: float, threshold: float,
+    ) -> Optional[tuple[str, int]]:
+        """Decide the delta order to move a holding toward its target (C4).
+
+        Trades only the difference between target and held, gated by a weight
+        drift threshold so repeated same-target bars don't over-accumulate. A
+        target that collapses to zero always liquidates (``must_exit``), even
+        below the threshold.
+
+        Args:
+            target_shares: Risk-approved target position size (shares).
+            held_shares: Shares currently held for the symbol.
+            target_weight: Target portfolio weight.
+            current_weight: Current portfolio weight of the holding.
+            threshold: Minimum |weight drift| to act on.
+
+        Returns:
+            ``(side, qty)`` with ``side`` in {"buy", "sell"} and ``qty`` > 0, or
+            ``None`` when no trade is warranted.
+        """
+        must_exit = target_shares == 0 and held_shares > 0
+        if abs(target_weight - current_weight) < threshold and not must_exit:
+            return None
+        delta = int(target_shares) - int(held_shares)
+        if delta == 0:
+            return None
+        return ("buy" if delta > 0 else "sell", abs(delta))
+
     def process_symbol(self, symbol: str) -> list[tuple]:
         """Run the decision pipeline for one symbol's current buffer.
 
@@ -249,15 +280,47 @@ class TradingSystem:
                 if self.dry_run:
                     self._record_signal("would_submit", sig, shares, decision.modifications)
                 else:  # pragma: no cover - live order path
-                    self.executor.submit_signal(decision.modified_signal)
-                    self.risk.record_trade()
-                    self._record_signal("submitted", sig, shares, decision.modifications)
+                    self._submit_rebalanced(symbol, sig, decision, shares, ps)
             else:
                 self._record_signal("rejected", sig, 0, [decision.rejection_reason])
             out.append((sig, decision))
 
         self._update_dashboard_context(regime, ps)
         return out
+
+    def _submit_rebalanced(self, symbol, sig, decision, target_shares, ps) -> None:  # pragma: no cover - live order path
+        """Submit only the delta toward the target position (C4).
+
+        Reads held shares from the tracker, computes the target/current weights,
+        and trades the difference: buy to increase, sell to reduce, hold on small
+        drift. Liquidating sells route through the executor as FLAT-direction
+        orders.
+        """
+        from core.regime_strategies import Direction
+
+        held = self.tracker.get_position(symbol) if self.tracker else None
+        held_shares = int(held.qty) if held else 0
+        equity = ps.equity or self.initial_capital
+        price = sig.entry_price or (held.current_price if held else 0.0)
+        if equity <= 0 or price <= 0:
+            return
+        target_weight = target_shares * price / equity
+        current_weight = held_shares * price / equity
+        threshold = getattr(self.orchestrator.config, "rebalance_threshold", 0.10)
+        order = self._rebalance_order(target_shares, held_shares,
+                                      target_weight, current_weight, threshold)
+        if order is None:
+            self._record_signal("hold", sig, held_shares, decision.modifications)
+            return
+        side, qty = order
+        delta_sig = dataclasses.replace(
+            decision.modified_signal,
+            direction=Direction.LONG if side == "buy" else Direction.FLAT,
+            metadata={**decision.modified_signal.metadata, "approved_shares": qty},
+        )
+        self.executor.submit_signal(delta_sig)
+        self.risk.record_trade()
+        self._record_signal(f"submitted_{side}", sig, qty, decision.modifications)
 
     def update_trailing_stops(self) -> None:  # pragma: no cover - needs live positions
         """Tighten protective stops per the current regime's strategy.
