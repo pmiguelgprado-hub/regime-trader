@@ -250,7 +250,16 @@ st.sidebar.caption("Live account/positions/price refresh on the interval; "
 @st.fragment(run_every=interval)
 def _live():
     render(symbol, toggles)
-    st.sidebar.caption(f"Last refresh: {datetime.now():%H:%M:%S}")
+
+
+@st.fragment(run_every=interval)
+def _refresh_caption():
+    # A fragment that writes to the sidebar must itself be invoked inside a
+    # `with st.sidebar:` block (Streamlit forbids targeting the sidebar from a
+    # fragment otherwise).
+    st.caption(f"Last refresh: {datetime.now():%H:%M:%S}")
 
 
 _live()
+with st.sidebar:
+    _refresh_caption()
