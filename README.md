@@ -10,8 +10,12 @@ circuit breakers, and executes via Alpaca (paper by default).
 > §10): buffer backfill (C1), delta/rebalance gate with a sell branch (C4),
 > bracket stops on entries (C3), and the drawdown safety slice — mark-to-market
 > circuit breaker → halt → liquidation (C2/C5/C6) — are all wired and tested.
-> Verified against a live Alpaca **paper** account: connection, account, daily
-> data entitlement, and an order submit/cancel round-trip (no position left).
+> Verified against a live Alpaca **paper** account (no position left behind):
+> connection + account, daily-data entitlement at the **full 764-bar seed depth**
+> (so C1 isn't a live no-op), and the **real bracket entry path** — submit +
+> stop-leg-id capture + cancel. Still unverified until the **first market-open
+> session**: an actual fill arriving on the stream and the per-bar MtM breaker
+> feed from live equity (both wired + unit-tested, not yet exercised live).
 > Dashboard is Streamlit (`streamlit run monitoring/streamlit_app.py`).
 >
 > **⚠️ Paper-ready ≠ profitable, and NOT cleared for real money.** In backtest

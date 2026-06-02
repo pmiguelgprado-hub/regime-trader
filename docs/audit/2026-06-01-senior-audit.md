@@ -424,5 +424,13 @@ Patrón en todas las fases (advisor-confirmado): el núcleo testeable se extrae/
 - **H5 (async + reconexión):** el pipeline corre síncrono en el handler del socket; los fills van en daemon thread sin reconexión con backoff. No testeable sin broker → diferido y marcado como scaffolding.
 - **M4/M5 (multi-activo):** chequeo de correlación inerte en vivo (sin `price_history`) y caps multi-activo nunca backtesteados. **Lean: restringir live a 1 símbolo** hasta validar multi-activo; la correlación es moot en single-asset.
 
-### Veredicto actualizado
-Con C1–C6 cableados y testeados, el sistema es **candidato a paper** (ya no "peligroso e inútil"). **Sigue NO listo para dinero real** y el paso a paper está gateado por: decisión H4 (riesgo), confirmación H6 (datos), y un **smoke real contra Alpaca** (el trade real del vídeo nunca se ejecutó en el build). "Code-complete" ≠ "paper-ready" ≠ "rentable".
+### Smoke real contra Alpaca paper (2026-06-02) — verificado
+`tmp/smoke_alpaca.py`, `tmp/smoke_order.py`, `tmp/smoke_live_paths.py` (`PYTHONPATH=.`):
+- Conexión + cuenta paper ($100k equity) ✅
+- **H6 entitlement / C1 seed depth:** `get_history(SPY,1Day,764)` → **764 barras** reales (last close 758.54) → features listos en barra 1 en producción ✅ (no es no-op silencioso).
+- **Path de entrada live real (bracket):** `submit_bracket_order` → submitted, order_id + **stop_leg id capturado** aun con mercado cerrado → C3 verificado contra Alpaca real, no solo mock ✅. Cancelado, sin posición.
+- Round-trip orden simple submit/cancel ✅. `--train-only` (HMM→models/hmm_SPY.pkl) y `--dry-run` (20/20) ✅.
+- **Sin verificar hasta la 1ª sesión con mercado abierto:** llegada de un fill real por el stream (`subscribe_fills`) y el feed del breaker MtM desde equity live (`tracker.refresh`). Ambos cableados + unit-testeados, no ejercitados en vivo.
+
+### Veredicto actualizado → **PAPER-READY**
+Con C1–C6 cableados/testeados, H4 resuelto, y los paths live verificados contra Alpaca paper, el sistema es **paper-ready** (default 1 símbolo SPY). **Sigue NO listo para dinero real:** R1 (sin edge) lo bloquea — correr paper ≥1 mes vigilando cada rebalanceo. "Paper-ready" ≠ "rentable". Pendientes no-código: R1 (research), H5 (reconexión), M4/M5 (multi-activo).
