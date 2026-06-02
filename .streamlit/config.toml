@@ -1,11 +1,8 @@
-# Dark theme to match the reference dashboard.
+# Default Streamlit dark theme — matches the reference dashboard
+# (dark background, red accent, Source Sans font). Do not force monospace or a
+# custom palette; the video uses stock dark.
 [theme]
 base = "dark"
-primaryColor = "#e67e22"
-backgroundColor = "#0e1117"
-secondaryBackgroundColor = "#1a1d24"
-textColor = "#fafafa"
-font = "monospace"
 
 [server]
 headless = true

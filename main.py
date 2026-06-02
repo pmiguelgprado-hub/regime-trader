@@ -611,6 +611,28 @@ class TradingSystem:
             "leverage_limit": c.max_leverage,
             "breakers_clear": self.risk.state.value == "normal",
         }
+
+        # model info + transition matrix (for the dashboard's optional panels)
+        meta = getattr(self.hmm, "metadata", None) if self.hmm else None
+        if meta is not None:
+            block["model_info"] = {
+                "n_regimes": meta.n_regimes, "bic": round(meta.bic, 1),
+                "log_likelihood": round(meta.log_likelihood, 1),
+                "converged": meta.converged, "n_iter": meta.n_iter,
+                "training_date": meta.training_date,
+                "n_features": len(meta.feature_columns),
+            }
+        model = getattr(self.hmm, "model", None) if self.hmm else None
+        if model is not None and getattr(model, "transmat_", None) is not None:
+            tm = model.transmat_
+            labels = []
+            for i in range(len(tm)):
+                lab = self.hmm.labels.get(i)
+                labels.append(lab.value if hasattr(lab, "value") else str(lab))
+            block["transition_matrix"] = {
+                "labels": labels,
+                "matrix": [[round(float(x), 3) for x in row] for row in tm],
+            }
         return block
 
     def load_state(self, path: str = STATE_SNAPSHOT) -> Optional[dict]:

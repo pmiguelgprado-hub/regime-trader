@@ -4,11 +4,13 @@ Run it:
 
     streamlit run monitoring/streamlit_app.py     # http://localhost:8501
 
-Layout mirrors the video's final dashboard: a sidebar (refresh interval,
-primary symbol, view toggles), a metrics row (Mode / Equity / Cash / Market),
-Regime Detection (regime, confidence, stability, vol rank + a confidence gauge
+Stock Streamlit **dark** theme (Source-Sans font, red accent — no custom
+palette, matching the video), with: a sidebar (refresh interval, primary
+symbol, view toggles), a metrics row (Mode / Equity / Cash / Market), Regime
+Detection (regime, confidence, stability, vol rank + an orange confidence gauge
 and runner-up states), Risk Status (drawdown / leverage + circuit-breaker
-banner), the learned-regime table, the portfolio, and a price panel.
+banner), the learned-regime table, the portfolio, a candlestick price panel,
+and optional transition-matrix / model-info / logs panels.
 
 Live account / positions / price are pulled from Alpaca on every refresh (real
 time); the regime + risk detail come from ``state_snapshot.json`` (written by
@@ -21,6 +23,8 @@ is the view and is never imported by the test suite.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import plotly.graph_objects as go
 import streamlit as st
 
@@ -30,36 +34,78 @@ from monitoring.dashboard_data import (
     live_price,
     load_regime_history,
     load_snapshot,
-    risk_panel,
 )
 
 st.set_page_config(page_title="Regime Trader", layout="wide",
                    initial_sidebar_state="expanded")
+# tighten Streamlit's default top gap so the metrics row sits near the top
+st.markdown("<style>.block-container{padding-top:2.2rem;}</style>",
+            unsafe_allow_html=True)
+
+ORANGE = "#ff7f0e"
+UP, DOWN = "#26a69a", "#ef5350"
 
 
 def _confidence_gauge(pct: float, regime: str) -> go.Figure:
-    """Donut/gauge of the current regime confidence (green/orange/red arc)."""
-    color = "#2ecc71" if pct >= 80 else "#e67e22" if pct >= 50 else "#e74c3c"
+    """Orange confidence gauge — matches the video (thick amber arc, % center).
+
+    Plotly animates the needle/number between values on each refresh.
+    """
     fig = go.Figure(go.Indicator(
         mode="gauge+number",
         value=pct,
-        number={"suffix": "%", "font": {"size": 40, "color": "#fafafa"}},
-        title={"text": f"Regime: {regime.upper()}", "font": {"size": 16, "color": "#fafafa"}},
+        number={"suffix": "%", "font": {"size": 44}},
+        title={"text": f"Regime: {regime.upper()}", "font": {"size": 15}},
         gauge={
-            "axis": {"range": [0, 100], "tickcolor": "#888"},
-            "bar": {"color": color, "thickness": 0.32},
+            "axis": {"range": [0, 100], "tickwidth": 1, "tickcolor": "#777",
+                     "ticksuffix": "%"},
+            "bar": {"color": ORANGE, "thickness": 0.30},
             "bgcolor": "rgba(0,0,0,0)",
             "borderwidth": 0,
             "steps": [
-                {"range": [0, 50], "color": "rgba(231,76,60,0.15)"},
-                {"range": [50, 80], "color": "rgba(230,126,34,0.15)"},
-                {"range": [80, 100], "color": "rgba(46,204,113,0.15)"},
+                {"range": [0, 100], "color": "rgba(255,127,14,0.12)"},
             ],
         },
     ))
-    fig.update_layout(height=260, margin=dict(l=20, r=20, t=50, b=10),
-                      paper_bgcolor="rgba(0,0,0,0)", font={"color": "#fafafa"})
+    fig.update_layout(
+        height=270, margin=dict(l=24, r=24, t=46, b=8),
+        paper_bgcolor="rgba(0,0,0,0)", font={"color": "#fafafa"},
+        transition={"duration": 600, "easing": "cubic-in-out"},
+    )
     return fig
+
+
+def _candles(symbol: str, df) -> None:
+    """Candlestick price panel (green up / red down), dark template."""
+    if df is None or df.empty or not {"open", "high", "low", "close"} <= set(df):
+        st.info(f"No OHLC price data for {symbol}.")
+        return
+    fig = go.Figure(go.Candlestick(
+        x=df.index, open=df["open"], high=df["high"], low=df["low"], close=df["close"],
+        increasing_line_color=UP, decreasing_line_color=DOWN, name=symbol,
+    ))
+    fig.update_layout(template="plotly_dark", height=380,
+                      margin=dict(l=10, r=10, t=10, b=10),
+                      xaxis_rangeslider_visible=False,
+                      paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def _transition_heatmap(tm: dict) -> None:
+    labels, matrix = tm.get("labels"), tm.get("matrix")
+    if not labels or not matrix:
+        st.info("No transition matrix (model not trained).")
+        return
+    fig = go.Figure(go.Heatmap(
+        z=matrix, x=labels, y=labels, colorscale="Oranges", zmin=0, zmax=1,
+        text=matrix, texttemplate="%{text:.2f}", textfont={"size": 12},
+        colorbar={"title": "P"},
+    ))
+    fig.update_layout(template="plotly_dark", height=360,
+                      margin=dict(l=10, r=10, t=10, b=10),
+                      paper_bgcolor="rgba(0,0,0,0)",
+                      yaxis={"title": "from"}, xaxis={"title": "to"})
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def _metrics(acct: dict | None, snap: dict) -> None:
@@ -74,7 +120,7 @@ def _metrics(acct: dict | None, snap: dict) -> None:
         c2.metric("Equity", f"${snap.get('equity_peak', 0):,.2f}")
         c3.metric("Cash", "—")
         c4.metric("Market", "—")
-        st.caption("⚠️ live account unavailable (no creds / market data) — showing last snapshot")
+        st.caption("⚠️ live account unavailable — showing last snapshot")
 
 
 def _regime_detection(snap: dict) -> None:
@@ -96,19 +142,18 @@ def _regime_detection(snap: dict) -> None:
         runners = reg.get("runner_ups") or {}
         others = [f"{k.upper()}: {v:.2e}" for k, v in list(runners.items())[1:5]]
         if others:
-            st.caption("Runner-up states:  " + "   |   ".join(others))
+            st.caption("Runner-up states:  " + "  |  ".join(others))
 
 
 def _risk_status(snap: dict) -> None:
     st.subheader("Risk Status")
     rk = snap.get("risk") or {}
-    daily = rk.get("daily_dd", 0.0) * 100
-    peak = rk.get("peak_dd", 0.0) * 100
-    lev_lim = rk.get("leverage_limit", 1.25)
     a, b, c = st.columns(3)
-    a.metric("Daily DD", f"{daily:.2f}%", help=f"limit {rk.get('daily_dd_limit', 0.03):.0%}")
-    b.metric("Peak DD", f"{peak:.2f}%", help=f"limit {rk.get('peak_dd_limit', 0.10):.0%}")
-    c.metric("Leverage cap", f"{lev_lim:.2f}x")
+    a.metric("Daily DD", f"{rk.get('daily_dd', 0.0) * 100:.2f}%",
+             help=f"limit {rk.get('daily_dd_limit', 0.03):.0%}")
+    b.metric("Peak DD", f"{rk.get('peak_dd', 0.0) * 100:.2f}%",
+             help=f"limit {rk.get('peak_dd_limit', 0.10):.0%}")
+    c.metric("Leverage cap", f"{rk.get('leverage_limit', 1.25):.2f}x")
     state = str(rk.get("state", snap.get("risk_state", "—"))).lower()
     if rk.get("breakers_clear", state == "normal"):
         st.success("All circuit breakers clear")
@@ -118,45 +163,31 @@ def _risk_status(snap: dict) -> None:
         st.error(f"Circuit breaker: {state.upper()} — trading halted / liquidating")
 
 
-def _regime_table(snap: dict) -> None:
-    table = snap.get("regime_table") or []
-    if table:
-        st.dataframe(table, use_container_width=True, hide_index=True)
-
-
 def _portfolio(positions: list) -> None:
     st.subheader("Portfolio")
     if not positions:
         st.info("No open positions.")
         return
-    rows = [{
+    st.dataframe([{
         "symbol": p.get("symbol"), "qty": p.get("qty"),
         "avg_entry": p.get("avg_entry_price"), "price": p.get("current_price"),
         "market_value": p.get("market_value"), "unrealized_pnl": p.get("unrealized_pl"),
-    } for p in positions]
-    st.dataframe(rows, use_container_width=True, hide_index=True)
+    } for p in positions], use_container_width=True, hide_index=True)
 
 
-def _signal_feed(snap: dict) -> None:
-    st.subheader("Signal feed")
-    sigs = snap.get("recent_signals") or []
-    if sigs:
-        st.dataframe(sigs, use_container_width=True, hide_index=True)
-    else:
-        st.info("No signals yet.")
-
-
-def _price(symbol: str, show: bool) -> None:
-    if not show:
+def _model_info(snap: dict) -> None:
+    mi = snap.get("model_info") or {}
+    if not mi:
+        st.info("No model info (train the HMM first).")
         return
-    st.subheader(f"{symbol} Price")
-    df = live_price(symbol)
-    if df is None or df.empty:
-        df = load_regime_history(symbol)
-    if df is not None and not df.empty and "close" in df:
-        st.line_chart(df["close"])
-    else:
-        st.info(f"No price data for {symbol}.")
+    st.subheader("Model info")
+    a, b, c, d = st.columns(4)
+    a.metric("Regimes", mi.get("n_regimes", "—"))
+    b.metric("BIC", mi.get("bic", "—"))
+    c.metric("Log-likelihood", mi.get("log_likelihood", "—"))
+    d.metric("Converged", "yes" if mi.get("converged") else "no")
+    st.caption(f"iters {mi.get('n_iter', '—')} · features {mi.get('n_features', '—')} "
+               f"· trained {mi.get('training_date', '—')}")
 
 
 def render(symbol: str, toggles: dict) -> None:
@@ -165,8 +196,6 @@ def render(symbol: str, toggles: dict) -> None:
     acct = live_account()
     positions = live_positions()
 
-    st.title("⚡ Regime Trader")
-    st.caption("HMM regime detection · Alpaca execution · walk-forward validated")
     _metrics(acct, snap)
     st.divider()
     left, right = st.columns([2, 1])
@@ -175,17 +204,32 @@ def render(symbol: str, toggles: dict) -> None:
     with right:
         _risk_status(snap)
     st.divider()
-    _regime_table(snap)
+    if snap.get("regime_table"):
+        st.dataframe(snap["regime_table"], use_container_width=True, hide_index=True)
     _portfolio(positions)
+
     if toggles.get("price"):
-        _price(symbol, True)
+        st.subheader(f"{symbol} Price")
+        df = live_price(symbol)
+        if df is None or df.empty:
+            df = load_regime_history(symbol)
+        _candles(symbol, df)
     if toggles.get("regime_history"):
         rh = load_regime_history(symbol)
-        if rh is not None and {"regime_prob", "weight"} & set(rh):
+        cols = [c for c in ("regime_prob", "weight") if rh is not None and c in rh]
+        if cols:
             st.subheader("Regime history")
-            st.line_chart(rh[[c for c in ("regime_prob", "weight") if c in rh]])
+            st.line_chart(rh[cols])
+    if toggles.get("transition"):
+        st.subheader("Transition matrix")
+        _transition_heatmap(snap.get("transition_matrix") or {})
+    if toggles.get("model_info"):
+        _model_info(snap)
     if toggles.get("logs"):
-        _signal_feed(snap)
+        st.subheader("Signal feed / logs")
+        sigs = snap.get("recent_signals") or []
+        st.dataframe(sigs, use_container_width=True, hide_index=True) if sigs \
+            else st.info("No signals yet.")
 
 
 # ----------------------------------------------------------------- sidebar ---
@@ -195,7 +239,9 @@ symbol = st.sidebar.text_input("Primary symbol", value="SPY").strip().upper() or
 toggles = {
     "price": st.sidebar.checkbox("Show price chart", value=True),
     "regime_history": st.sidebar.checkbox("Show regime history", value=True),
-    "logs": st.sidebar.checkbox("Show signal feed / logs", value=False),
+    "transition": st.sidebar.checkbox("Show transition matrix", value=False),
+    "logs": st.sidebar.checkbox("Show logs", value=False),
+    "model_info": st.sidebar.checkbox("Show model info", value=False),
 }
 st.sidebar.caption("Live account/positions/price refresh on the interval; "
                    "regime + risk come from the daily snapshot.")
@@ -204,6 +250,7 @@ st.sidebar.caption("Live account/positions/price refresh on the interval; "
 @st.fragment(run_every=interval)
 def _live():
     render(symbol, toggles)
+    st.sidebar.caption(f"Last refresh: {datetime.now():%H:%M:%S}")
 
 
 _live()
