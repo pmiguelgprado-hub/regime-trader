@@ -259,6 +259,13 @@ class TradingSystem:
             if self.alerts:
                 self.alerts.send("retrain_failed", str(exc))
             return False
+        # Minimal promotion gate (floor until A-4 champion-challenger exists): never
+        # auto-install a fit that did not converge.
+        if not getattr(new.metadata, "converged", False):
+            logging.getLogger(__name__).warning("retrain did not converge; keeping current model")
+            if self.alerts:
+                self.alerts.send("retrain_rejected", "challenger did not converge")
+            return False
         self.install_model(new)
         if self.tlog:
             self.tlog.log(self.tlog.main, "hmm_retrain_inloop",
@@ -281,9 +288,12 @@ class TradingSystem:
     def maybe_retrain(self, symbol: str) -> bool:
         """Retrain in-loop when the in-memory model is stale by age (A-1).
 
-        The startup file-age check never fires again in a long-running loop; this
-        refreshes the *in-memory* model (and propagates it) once it exceeds
-        ``hmm.max_age_days``.
+        **Opt-in** via ``hmm.auto_retrain`` (default off). Unsupervised
+        auto-promotion of a refit has no full quality gate yet (only the
+        convergence floor in :meth:`retrain_from_buffer`; champion-challenger is
+        A-4), so it stays disabled by default — and the deployed ``--run-once``
+        path already refreshes by file age at startup, making this redundant
+        there. It matters for a long-running stream process.
 
         Args:
             symbol: Symbol buffer to retrain from.
@@ -291,8 +301,10 @@ class TradingSystem:
         Returns:
             True if a retrain happened this call.
         """
-        max_age = float(self.config.get("hmm", {}).get("max_age_days", HMM_MAX_AGE_DAYS))
-        if self._model_age_days() <= max_age:
+        hcfg = self.config.get("hmm", {})
+        if not hcfg.get("auto_retrain", False):
+            return False
+        if self._model_age_days() <= float(hcfg.get("max_age_days", HMM_MAX_AGE_DAYS)):
             return False
         return self.retrain_from_buffer(symbol)
 

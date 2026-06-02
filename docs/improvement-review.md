@@ -245,12 +245,19 @@ datos recientes. **Dimensión peor cubierta hoy** — el modelo es esencialmente
 
 ### A-1 · Retrain solo al arranque + sin propagar al lazo vivo — **Prioridad Alta** — ✅ IMPLEMENTADO (2026-06-02)
 - **Implementado:** `TradingSystem.install_model(new_hmm)` reemplaza el motor **y** llama a
-  `orchestrator.update_regime_infos` (cierra el riesgo de mapa obsoleto); `retrain_from_buffer`
-  refit sobre el buffer vivo con guarda de datos insuficientes; `maybe_retrain` dispara por edad
-  del modelo en memoria (`hmm.max_age_days`), cableado en `run_cycle`. Tests:
-  `tests/test_live_retrain.py` (propagación, refit+propagación, guarda, dispara/no-dispara por edad).
-- **Pendiente:** disparo por **drift** (A-3 ya provee PSI/entropía); requiere persistir la
-  distribución de features de entrenamiento como referencia. Follow-up.
+  `orchestrator.update_regime_infos` (cierra el riesgo de mapa obsoleto — el verdadero núcleo del
+  hallazgo); `retrain_from_buffer` refit sobre el buffer vivo con guarda de datos insuficientes y
+  **gate de convergencia** (no promueve un fit no convergido); `maybe_retrain` dispara por edad del
+  modelo en memoria, cableado en `run_cycle`. Tests: `tests/test_live_retrain.py`.
+- **Decisión de seguridad (importante):** el auto-retrain in-loop es **opt-in** (`hmm.auto_retrain`,
+  **default OFF**). Razón: promover un refit sin supervisión no tiene gate de calidad completo
+  (eso es A-4, champion-challenger), y el path desplegado (`--run-once`, launchd L-V 22:15, proceso
+  nuevo cada día) **ya refresca por edad de fichero en el arranque** (`run_once`→`_needs_retrain`→
+  `run_train`), así que el disparo in-loop es redundante allí. `install_model` (propagación) sí es
+  durable y necesario para el path de stream y para el follow-up de drift.
+- **Pendiente:** disparo por **drift** (A-3 ya provee PSI/entropía; requiere persistir la
+  distribución de features de entrenamiento como referencia) y el gate completo **A-4**
+  (champion-challenger + registro versionado + persistencia del pickle reentrenado).
 
 - **Gap:** `main.py:89 _needs_retrain` decide reentrenar comparando el `mtime` del pickle con
   `HMM_MAX_AGE_DAYS` (~7 días), y solo se evalúa en el **startup** del lazo (`main.py:838,936`),

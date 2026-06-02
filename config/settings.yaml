@@ -44,6 +44,9 @@ hmm:
   flicker_window: 20                # lookback window for flicker detection
   flicker_threshold: 4              # max regime changes in window before flagged unstable
   min_confidence: 0.55              # min posterior prob to act on a regime label
+  max_age_days: 7                   # retrain when the model is older than this (startup + in-loop)
+  auto_retrain: false               # A-1: in-loop auto-retrain+propagate (OFF until A-4 gate exists;
+                                    #   --run-once already refreshes by file age at startup)
 
 # ---------------------------------------------------------------------------
 # strategy — volatility-regime-based allocation
