@@ -5,18 +5,20 @@ Detects market regimes with a Gaussian Hidden Markov Model, maps each regime
 to a target allocation/leverage, enforces hard risk limits and drawdown
 circuit breakers, and executes via Alpaca (paper by default).
 
-> **Status:** Phases 1–8 implemented (102 tests passing, 0 skipped). Backtest
-> stack, risk layer, Alpaca broker integration, the `TradingSystem` live
-> orchestration (`main.py`), and the `monitoring/` package (JSON logging,
-> rate-limited alerts, rich dashboard) are all in place. The CLI runs
-> `--backtest`/`--stress-test`/`--train-only`/`--dry-run`/`--dashboard`/`--live`.
+> **Status: PAPER-READY** (132 tests passing). The live loop was audited and
+> repaired (see [`docs/audit/2026-06-01-senior-audit.md`](docs/audit/2026-06-01-senior-audit.md),
+> §10): buffer backfill (C1), delta/rebalance gate with a sell branch (C4),
+> bracket stops on entries (C3), and the drawdown safety slice — mark-to-market
+> circuit breaker → halt → liquidation (C2/C5/C6) — are all wired and tested.
+> Verified against a live Alpaca **paper** account: connection, account, daily
+> data entitlement, and an order submit/cancel round-trip (no position left).
+> Dashboard is Streamlit (`streamlit run monitoring/streamlit_app.py`).
 >
-> **⚠️ Not live-ready — read [`docs/go-live-review.md`](docs/go-live-review.md).**
-> The suite proves the units + the backtest/dry-run pipeline, not live trading.
-> Key blockers: the strategy underperforms buy-and-hold in backtest (no proven
-> edge), daily-vs-5min timeframe mismatch, and the live loop lacks an
-> allocation-rebalance/delta gate (it would over-accumulate). Paper-trade and
-> fix those before funding.
+> **⚠️ Paper-ready ≠ profitable, and NOT cleared for real money.** In backtest
+> the strategy underperforms buy-and-hold (no proven edge) — that gates *real
+> capital*, not paper. Run paper for ≥1 month and watch every rebalance first.
+> Known limits: single-symbol by default (multi-asset risk caps unvalidated,
+> M4/M5); no stream auto-reconnect yet (H5). See `docs/go-live-review.md`.
 >
 > **Safety:** paper trading is the default; live mode requires typing
 > `YES I UNDERSTAND THE RISKS`. Secrets come from `.env` (gitignored).

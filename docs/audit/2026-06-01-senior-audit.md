@@ -2,7 +2,9 @@
 
 _Fecha: 2026-06-01. Revisor: auditor técnico senior (sistemas de trading algorítmico). Fuente primaria: el código real del repo. Tests: 102 passed (py3.14). No se modificó nada del sistema; este documento es aditivo._
 
-> **Veredicto: NO APTO PARA PAPER TRADING en su estado actual.**
+> **✅ ACTUALIZACIÓN 2026-06-02 — REPARADO, AHORA PAPER-READY.** C1–C6 + H2/M1/M3/M6 + H3/H4 cableados y testeados (102→132 tests); dashboard Streamlit; verificado contra cuenta Alpaca **paper** real (conexión + cuenta + entitlement datos H6 + round-trip orden submit/cancel sin posición). Detalle en **§10**. El veredicto original (abajo) queda como registro histórico del estado pre-reparación. **Paper-ready ≠ rentable:** R1 (sin edge) sigue bloqueando dinero real; correr paper ≥1 mes primero.
+>
+> **Veredicto ORIGINAL (2026-06-01, pre-reparación): NO APTO PARA PAPER TRADING en su estado actual.**
 > El backtest, la capa de riesgo unitaria y los adaptadores de broker (contra un SDK mockeado) están bien construidos. Pero el **lazo en vivo (`main.py` → `run_live` → `run_stream`) está estructuralmente incompleto**: arranca con buffer frío, no coloca stops, no rebalancea (solo acumula), y **los circuit breakers de drawdown —la característica de seguridad de cabecera— no tienen ningún caller en vivo, así que no funcionan**. Esto último va más allá de lo que reconoce el propio `go-live-review.md`.
 
 El proyecto incluye un `docs/go-live-review.md` honesto y de alta calidad escrito por el autor. Esta auditoría lo verifica de forma independiente contra el código, **confirma** sus hallazgos #1–#3, y añade tres bloqueos críticos que su premisa daba por funcionando (C1, C2, C5) y corrige la premisa de uno (C3 vs su #4).

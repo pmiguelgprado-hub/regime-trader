@@ -10,16 +10,21 @@
 broker:
   paper_trading: true               # true = Alpaca paper account, false = live
   symbols:                          # tradable universe
+    # Paper-ready default: SINGLE symbol. The backtester is a single-asset
+    # allocation sleeve (trades the first symbol), and the multi-asset risk caps
+    # (correlation/sector/concurrent) are unvalidated + correlation is inert
+    # live without price_history (audit M4/M5). Validate multi-asset before
+    # re-enabling the wider universe below.
     - SPY
-    - QQQ
-    - AAPL
-    - MSFT
-    - AMZN
-    - GOOGL
-    - NVDA
-    - META
-    - TSLA
-    - AMD
+    # - QQQ
+    # - AAPL
+    # - MSFT
+    # - AMZN
+    # - GOOGL
+    # - NVDA
+    # - META
+    # - TSLA
+    # - AMD
   timeframe: 1Day                   # LOCKED daily (M3): HMM + vol regimes + breakers
                                     #   are all daily-calibrated. Do NOT switch to
                                     #   intraday without re-validating the whole stack.
