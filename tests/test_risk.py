@@ -35,12 +35,19 @@ def test_position_size_respects_single_position_cap(risk: RiskManager) -> None:
     assert res.notional <= risk.config.max_single_position * equity + price
 
 
-def test_exposure_cap_enforced(risk: RiskManager) -> None:
-    """check_exposure should reject trades breaching the gross-exposure cap."""
+def test_exposure_cap_is_max_leverage(risk: RiskManager) -> None:
+    """The gross-exposure ceiling is max_leverage (1.25x): reachable, not exceeded (H4)."""
     equity = 100_000.0
-    cap = risk.config.max_exposure * risk.config.max_leverage * equity
-    assert risk.check_exposure(0.0, cap * 0.9, equity) is True
-    assert risk.check_exposure(0.0, cap * 1.1, equity) is False
+    ceiling = risk.config.max_leverage * equity          # 1.25x
+    assert risk.check_exposure(0.0, ceiling * 0.99, equity) is True    # 1.24x ok
+    assert risk.check_exposure(0.0, ceiling * 1.01, equity) is False   # > 1.25x rejected
+
+
+def test_low_vol_125x_leverage_is_reachable(risk: RiskManager) -> None:
+    """The configured 1.25x low-vol leverage is live (H4: was dead-capped at 1.0x
+    by the old max_exposure*max_leverage product)."""
+    equity = 100_000.0
+    assert risk.check_exposure(0.0, 1.20 * equity, equity) is True
 
 
 def test_leverage_cap_enforced(risk: RiskManager) -> None:

@@ -64,8 +64,7 @@ strategy:
 # ---------------------------------------------------------------------------
 risk:
   max_risk_per_trade: 0.01          # frac of equity risked per trade (1%)
-  max_exposure: 0.80                # max gross exposure (frac of equity)
-  max_leverage: 1.25                # hard leverage ceiling
+  max_leverage: 1.25                # gross-leverage ceiling, reachable (H4)
   max_single_position: 0.15         # max weight of any single symbol
   max_concurrent: 5                 # max simultaneous open positions
   max_daily_trades: 20              # daily order cap (overtrading guard)

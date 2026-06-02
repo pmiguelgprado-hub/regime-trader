@@ -71,8 +71,7 @@ class RiskConfig:
     """Configuration for the risk manager (mirrors `risk` settings)."""
 
     max_risk_per_trade: float = 0.01
-    max_exposure: float = 0.80
-    max_leverage: float = 1.25
+    max_leverage: float = 1.25          # gross-leverage ceiling (H4: now the sole cap)
     max_single_position: float = 0.15
     max_concurrent: int = 5
     max_daily_trades: int = 20
@@ -429,16 +428,16 @@ class RiskManager:
             equity: Current equity.
 
         Returns:
-            True if within `max_exposure` and `max_leverage`.
+            True if gross leverage stays within `max_leverage`.
         """
         if equity <= 0:
             return False
+        # H4: the gross-leverage ceiling is `max_leverage` (e.g. 1.25x), so the
+        # configured low-vol 1.25x is actually reachable. The previous
+        # `max_exposure * max_leverage` product was dimensionally wrong and
+        # silently capped gross at 1.0x, making 1.25x dead.
         leverage = (current_gross + proposed_notional) / equity
-        if leverage > self.config.max_leverage + 1e-9:
-            return False
-        if leverage > self.config.max_exposure * self.config.max_leverage + 1e-9:
-            return False
-        return True
+        return leverage <= self.config.max_leverage + 1e-9
 
     def check_concurrent(self, open_positions: int) -> bool:
         """Verify open-position count is below `max_concurrent`.
