@@ -42,6 +42,7 @@ import numpy as np
 import pandas as pd
 
 from core.hmm_engine import HMMEngine, Regime
+from core.portfolio import portfolio_target_weights
 from core.regime_strategies import StrategyConfig, StrategyOrchestrator
 from core.risk_manager import RiskManager
 from data.feature_engineering import FeatureEngineer
@@ -275,6 +276,61 @@ class Backtester:
             symbol=symbol,
             initial_capital=cap,
         )
+
+    def run_portfolio(self, frames: dict[str, pd.DataFrame], return_weights: bool = False):
+        """Multi-asset backtest (E-1): regime sets the gross budget, split across names.
+
+        The market-wide volatility regime (detected on the **primary** symbol via
+        the existing single-asset walk-forward) sets HOW MUCH gross exposure the
+        book runs each bar; :func:`~core.portfolio.portfolio_target_weights` splits
+        that budget equally across the universe, capped per name
+        (``max_single_position``) and by count (``max_concurrent``). Portfolio
+        return is the weighted sum of per-symbol returns; slippage is charged on
+        per-name turnover. v1 = equal-weight, shared regime (see the optimization
+        roadmap doc for the design + forks).
+
+        Args:
+            frames: ``{symbol: OHLCV}``; the first symbol drives the regime.
+            return_weights: If True, also return the per-bar weight DataFrame.
+
+        Returns:
+            Portfolio equity ``Series`` (or ``(equity, weights_df)`` if requested).
+        """
+        symbols = list(frames)
+        primary = symbols[0]
+        base = self.run({primary: frames[primary]})   # regime + gross budget per OOS bar
+        budget = base.regime_history["weight"]
+        idx = budget.index
+        rc = self.risk_manager.config
+        rets = {
+            s: frames[s]["close"].pct_change().reindex(idx).fillna(0.0).to_numpy()
+            for s in symbols
+        }
+
+        equity = self.config.initial_capital
+        eq_val: list[float] = []
+        weight_rows: list[dict] = []
+        prev_w = {s: 0.0 for s in symbols}
+
+        for t in range(len(idx)):
+            # 1) realize prior weights against this bar's returns
+            port_ret = sum(prev_w[s] * rets[s][t] for s in symbols)
+            equity *= (1.0 + port_ret)
+            # 2) new target weights from this bar's regime budget
+            w = portfolio_target_weights(
+                float(budget.iloc[t]), symbols, rc.max_single_position, rc.max_concurrent
+            )
+            # 3) slippage on per-name turnover
+            turnover = sum(abs(w.get(s, 0.0) - prev_w[s]) for s in symbols)
+            equity *= (1.0 - turnover * self.config.slippage_pct)
+            prev_w = {s: w.get(s, 0.0) for s in symbols}
+            eq_val.append(equity)
+            weight_rows.append(dict(prev_w))
+
+        eq = pd.Series(eq_val, index=idx, name="equity")
+        if return_weights:
+            return eq, pd.DataFrame(weight_rows, index=idx)
+        return eq
 
     # -------------------------------------------------------------- helpers ---
     def _generate_folds(self, n_bars: int) -> list[tuple[int, int, int, int]]:

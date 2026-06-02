@@ -167,14 +167,19 @@ Controles de riesgo, validaciones, gestión de errores y protección del capital
 
 Arquitectura, modularidad y capacidad de ampliar activos, timeframes o estrategias.
 
-### E-1 · Caps multi-activo nunca backtesteados — **Prioridad Alta**
-- **Gap (= M5):** el backtester es un *sleeve* de **un único símbolo** (opera el primero de la
-  lista). El lazo vivo itera todos los `broker.symbols`, pero los caps de riesgo
-  (`max_single_position: 0.15`, `max_concurrent: 5`, sector, correlación) asumen una cartera
-  multi-nombre que **nunca se ha backtesteado**. El default actual (`symbols: [SPY]`) es prudente.
-- **Solución:** o un backtester multi-activo con asignación a nivel de cartera, o mantener live
-  restringido a un símbolo hasta validar. No habilitar el universo ampliado (comentado en
-  `settings.yaml`) sin backtest multi-activo.
+### E-1 · Caps multi-activo nunca backtesteados — **Prioridad Alta** — ✅ v1 IMPLEMENTADO (2026-06-02)
+- **Gap (= M5):** el backtester era un *sleeve* de un único símbolo; los caps multi-nombre
+  (`max_single_position`, `max_concurrent`, sector, correlación) nunca se backtestearon.
+- **Implementado (v1, backtest):** `core/portfolio.py::portfolio_target_weights` (split equal-weight
+  de un presupuesto bruto, capado por nombre y por concurrencia) + `Backtester.run_portfolio(frames)`
+  — el régimen de mercado (símbolo primario) fija el presupuesto bruto por barra, se reparte entre N
+  nombres, equity de cartera = suma ponderada de retornos, slippage sobre turnover por nombre. Tests:
+  `tests/test_portfolio.py`, `tests/test_backtest.py::run_portfolio*`. **Decisiones v1 (cambiables):**
+  régimen compartido de mercado, equal-weight. Ver diseño + forks en
+  `docs/analysis/2026-06-02-optimization-and-roadmap.md` §2.
+- **Pendiente:** cablear el allocator al lazo **vivo** (`process_symbol` por cartera, no símbolo a
+  símbolo), correlación activa (alimentar `price_history`), y pesos vol-parity/trend. Recordatorio:
+  multi-activo da robustez/diversificación, **no edge** por sí mismo.
 
 ### E-2 · Features O(n²) por barra — **Prioridad Media**
 - **Gap (= H3):** cada barra recomputa el conjunto completo de features sobre todo el buffer. El

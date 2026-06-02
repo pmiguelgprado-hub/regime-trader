@@ -141,6 +141,32 @@ def test_flat_slippage_unchanged_when_coeff_zero(_ohlcv_module) -> None:
     assert eff.values == pytest.approx(BacktestConfig().slippage_pct, abs=2e-5)
 
 
+# --------------------------------------------------------- multi-asset (E-1) ---
+def test_run_portfolio_produces_aligned_positive_equity(_ohlcv_module) -> None:
+    """A multi-symbol portfolio backtest yields a positive equity curve."""
+    frames = {"A": _ohlcv_module, "B": _ohlcv_module, "C": _ohlcv_module}
+    eq = _make_backtester().run_portfolio(frames)
+    assert len(eq) > 100
+    assert (eq > 0).all()
+
+
+def test_run_portfolio_is_deterministic(_ohlcv_module) -> None:
+    """Same inputs -> identical portfolio equity curve."""
+    frames = {"A": _ohlcv_module, "B": _ohlcv_module}
+    a = _make_backtester().run_portfolio(frames)
+    b = _make_backtester().run_portfolio(frames)
+    pd.testing.assert_series_equal(a, b)
+
+
+def test_run_portfolio_respects_single_position_cap(_ohlcv_module) -> None:
+    """No single name ever exceeds the configured per-symbol cap."""
+    frames = {"A": _ohlcv_module, "B": _ohlcv_module, "C": _ohlcv_module}
+    bt = _make_backtester()
+    weights = bt.run_portfolio(frames, return_weights=True)[1]
+    cap = bt.risk_manager.config.max_single_position
+    assert (weights.to_numpy() <= cap + 1e-9).all()
+
+
 # --------------------------------------------------------- halt recovery ---
 def _halt_recoveries(rh) -> int:
     """Count halted -> normal transitions (breaker releasing after a halt)."""
