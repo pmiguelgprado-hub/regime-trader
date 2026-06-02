@@ -200,7 +200,13 @@ class TradingSystem:
         timeframe = self.config.get("broker", {}).get("timeframe", "1Day")
         lookback = self._buffer_cap  # same depth the rolling buffer is capped to (H3)
         for sym in self.symbols:
-            hist = market_data.get_history(sym, timeframe, lookback)
+            try:
+                hist = market_data.get_history(sym, timeframe, lookback)
+            except Exception as exc:  # noqa: BLE001 - skip a bad symbol, keep the rest
+                if self.tlog:
+                    self.tlog.log(self.tlog.main, "backfill_warn",
+                                  f"history fetch failed for {sym}: {exc}", level="WARNING")
+                continue
             if hist is None or hist.empty:
                 if self.tlog:
                     self.tlog.log(self.tlog.main, "backfill_warn",
@@ -499,6 +505,31 @@ class TradingSystem:
 
         market_data.subscribe_bars(self.symbols, on_bar)
 
+    def run_cycle(self, market_data, state_path: str = STATE_SNAPSHOT) -> list[tuple]:
+        """Run ONE decision cycle on the latest closed bars (daily live path).
+
+        The HMM/regimes/breakers are daily-calibrated, but Alpaca's bar
+        websocket streams minute bars — the wrong cadence. So for a daily
+        strategy this is the correct live entry point: refresh buffers from
+        history (the freshly-closed daily bar), process each symbol once,
+        tighten stops, and persist state. Schedule it once per trading day
+        (see ``run_once``); do not drive it off the minute stream.
+
+        Args:
+            market_data: Source exposing ``get_history``.
+            state_path: Where to write the recovery/dashboard snapshot.
+
+        Returns:
+            All ``(Signal, RiskDecision)`` produced this cycle.
+        """
+        self.seed_buffers(market_data)   # latest daily bars (capped, symbol-tolerant)
+        results: list[tuple] = []
+        for sym in self.symbols:
+            results.extend(self.process_symbol(sym))
+        self.update_trailing_stops()
+        self.save_state(state_path)
+        return results
+
     # ----------------------------------------------------- state snapshot ---
     def save_state(self, path: str = STATE_SNAPSHOT) -> None:
         """Persist recovery state to ``state_snapshot.json``.
@@ -774,6 +805,76 @@ def run_live(config: dict[str, Any], credentials: dict[str, str],
         raise
 
 
+def run_once(config: dict[str, Any], credentials: dict[str, str],
+             dry_run: bool = False) -> None:  # pragma: no cover - live broker/market
+    """Run ONE daily decision cycle and exit (the daily live entry point).
+
+    Correct cadence for the daily-calibrated strategy: schedule this once per
+    trading day (cron/launchd) instead of holding a minute-bar websocket open.
+    Connects, loads/trains the HMM, reconciles positions, runs one
+    :meth:`TradingSystem.run_cycle` (decisions + bracket entries + rebalance +
+    MtM breaker + stops), persists state, and returns. Orders submitted while
+    the market is closed queue for the next open (paper), so this can run after
+    close or before open.
+
+    Args:
+        config: Parsed settings.
+        credentials: Broker credentials.
+        dry_run: If True, run the pipeline without submitting orders.
+    """
+    from broker.alpaca_client import AlpacaClient, AlpacaConfig
+    from broker.order_executor import OrderExecutor
+    from broker.position_tracker import PositionTracker
+    from core.hmm_engine import HMMEngine
+    from core.regime_strategies import StrategyOrchestrator
+    from core.risk_manager import RiskManager
+    from data.feature_engineering import FeatureEngineer
+    from data.market_data import MarketData
+    from monitoring.alerts import AlertConfig, AlertManager
+    from monitoring.logger import LoggerConfig, setup_logging
+
+    tlog = setup_logging(LoggerConfig(log_dir="logs"))
+    alerts = AlertManager(_build_dataclass(AlertConfig, config.get("monitoring", {})), tlog)
+    hmm_cfg, strat_cfg, risk_cfg = _core_configs(config)
+    symbols = config.get("broker", {}).get("symbols", [])
+    symbol = symbols[0]
+
+    paper = str(credentials.get("paper", "true")).lower() != "false"
+    client = AlpacaClient(AlpacaConfig(credentials["api_key"], credentials["secret_key"], paper=paper))
+    client.connect()
+    account = client.get_account()
+    tlog.log(tlog.main, "cycle_start", f"account equity {account['equity']}",
+             mode="PAPER" if paper else "LIVE", market_open=client.is_market_open())
+
+    md = MarketData(client)
+    model_path = f"{MODEL_DIR}/hmm_{symbol}.pkl"
+    fe = FeatureEngineer()
+    if _needs_retrain(model_path):
+        tlog.log(tlog.main, "hmm_retrain", "model missing/stale; training")
+        run_train(config, symbols)
+    hmm = HMMEngine.load(model_path)
+
+    risk_cfg.lock_file = risk_cfg.lock_file or "logs/trading_halted.lock"
+    risk = RiskManager(risk_cfg)
+    risk._equity_peak = account["equity"]
+    orch = StrategyOrchestrator(strat_cfg, hmm.regime_info)
+    tracker = PositionTracker(client)
+    tracker.sync_on_startup()
+    executor = OrderExecutor(client)
+
+    system = TradingSystem(config, hmm, orch, risk, fe, executor, tracker,
+                           tlogger=tlog, alerts=alerts, dry_run=dry_run)
+    system.load_state()
+    try:
+        results = system.run_cycle(md)
+        tlog.log(tlog.main, "cycle_done", f"{len(results)} decisions")
+    except Exception as exc:  # noqa: BLE001 - log, save, alert, re-raise
+        logging.getLogger(__name__).exception("cycle error")
+        alerts.send("fatal_error", str(exc))
+        system.save_state()
+        raise
+
+
 # ===========================================================================
 # Backtest mode (Phase 4 — unchanged)
 # ===========================================================================
@@ -898,6 +999,8 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     mode.add_argument("--dry-run", action="store_true", dest="dry_run",
                       help="full pipeline on history, no orders")
     mode.add_argument("--dashboard", action="store_true", help="render dashboard for last state")
+    mode.add_argument("--run-once", action="store_true", dest="run_once",
+                      help="one daily decision cycle then exit (schedule this for daily)")
     mode.add_argument("--live", action="store_true", help="paper/live trading loop (default)")
 
     parser.add_argument("--compare", action="store_true", help="add benchmark comparison (backtest)")
@@ -928,6 +1031,8 @@ def main(argv: Optional[list[str]] = None) -> None:
         run_dry_run(config, symbols, args.start, args.end)
     elif args.dashboard:
         run_dashboard(config)
+    elif args.run_once:
+        run_once(config, load_credentials())
     else:  # default: live
         run_live(config, load_credentials())
 
