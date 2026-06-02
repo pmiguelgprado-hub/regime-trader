@@ -91,6 +91,8 @@ class RiskConfig:
     overnight_gap_mult: float = 3.0
     overnight_gap_budget: float = 0.02
     reduce_size_mult: float = 0.50
+    halt_floor_mult: float = 0.25      # min allocation kept on HALT so equity can recover
+                                       #   (avoids the peak-DD permanent-flat trap; backtest sizing)
     lock_file: Optional[str] = None
 
 
@@ -463,7 +465,18 @@ class RiskManager:
         self._daily_trades += 1
 
     def target_size_multiplier(self) -> float:
-        """Allocation multiplier for the current posture (1.0/0.5/0.0)."""
+        """Allocation multiplier for the current posture.
+
+        NORMAL=1.0, REDUCED=0.5. HALTED returns ``halt_floor_mult`` (a small
+        non-zero floor) rather than 0: a halt that forces weight to 0 freezes the
+        equity below its peak, so the peak-drawdown breaker never releases and the
+        strategy stays flat forever (the permanent-flat trap). A floor lets equity
+        recover so a non-latching breaker can re-engage NORMAL. (Live trading keeps
+        the hard halt via ``position_size``/close-all; this multiplier drives the
+        backtester's allocation sizing.)
+        """
+        if self.state is RiskState.HALTED:
+            return self.config.halt_floor_mult
         return STATE_SIZE_MULT[self.state]
 
     def update_drawdown_state(

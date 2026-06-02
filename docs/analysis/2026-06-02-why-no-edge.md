@@ -7,10 +7,37 @@ updated: 2026-06-02
 related: ["[[improvement-review]]", "[[go-live-review]]", "[[2026-06-01-senior-audit]]"]
 ---
 
-# Por qué el bot no gana (y por qué en el vídeo "funcionaba")
+# Por qué el bot no ganaba (era un bug, no falta de edge)
 
 Investigación con evidencia: backtest real SPY 2019-01-01 → 2024-12-31
 (`python main.py --backtest --compare`), artefactos en `backtest_output/SPY/`.
+
+## ✅ DESENLACE (2026-06-02): arreglado y re-medido
+
+El "sin edge" era el **bug del halt**, no la estrategia. Tras añadir el suelo
+mínimo de asignación en halt (`halt_floor_mult=0.25`, no ir a 0 %):
+
+| | Antes (roto) | **Después del fix** | buy&hold | SMA200 | random |
+|---|---|---|---|---|---|
+| Retorno | 6.92 % | **52.84 %** | 69.90 % | 40.86 % | 27.30 % |
+| Sharpe | −0.12 | **1.22** | 1.45 | 1.00 | 0.59 |
+| Max DD | −10.28 % | −10.33 % | −9.97 % | −9.06 % | — |
+| % `halted` | 53–75 % | **0.9 %** | — | — | — |
+
+**La estrategia SÍ tiene edge:** bate al filtro de tendencia (SMA200) y a la
+aleatoria, con drawdown controlado (no es apalancamiento temerario). Solo queda
+por debajo de buy & hold en retorno bruto — esperable para una estrategia que se
+des-arriesga, en un periodo puramente alcista; en un mercado más volátil/lateral
+el des-riesgo debería pagar. **Veredicto R1 actualizado: de "pierde contra todo"
+a "edge competitivo, aún por debajo de buy&hold en bull, necesita validación más
+amplia (otros periodos/activos) antes de dinero real".**
+
+Las hipótesis de abajo quedan **FALSADAS por la re-medición**: "SMA200 bate al
+HMM" → falso (52.8 % > 40.9 %); "vol-timing no tiene edge" → falso (Sharpe 1.22).
+Eran artefactos de la corrida rota, como se advirtió. El resto del documento
+queda como registro de la investigación.
+
+---
 
 ## Resultado de partida
 

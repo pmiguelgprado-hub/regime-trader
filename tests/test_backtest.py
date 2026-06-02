@@ -141,6 +141,37 @@ def test_flat_slippage_unchanged_when_coeff_zero(_ohlcv_module) -> None:
     assert eff.values == pytest.approx(BacktestConfig().slippage_pct, abs=2e-5)
 
 
+# --------------------------------------------------------- halt recovery ---
+def _halt_recoveries(rh) -> int:
+    """Count halted -> normal transitions (breaker releasing after a halt)."""
+    return int((rh["risk_state"].eq("normal") & rh["risk_state"].shift().eq("halted")).sum())
+
+
+def test_halt_floor_enables_recovery_that_zero_does_not(_ohlcv_module) -> None:
+    """The halt floor breaks the permanent-flat trap: equity recovers, breaker releases.
+
+    Legacy (halt -> weight 0) freezes equity below the peak, so peak-drawdown stays
+    >limit and the breaker never releases (0 recoveries). A non-zero floor lets
+    equity climb back so the breaker can re-engage NORMAL.
+    """
+    def run(floor: float):
+        bt = Backtester(
+            BacktestConfig(),
+            HMMEngine(HMMConfig(n_candidates=[3], n_init=1)),
+            StrategyConfig(),
+            RiskManager(RiskConfig(halt_floor_mult=floor)),
+            FeatureEngineer(),
+        )
+        return bt.run({"SPY": _ohlcv_module}).regime_history
+
+    stuck = run(0.0)   # legacy behaviour (weight 0 on halt)
+    fixed = run(0.25)  # minimum floor
+    if "halted" not in set(stuck["risk_state"]):
+        pytest.skip("no halt occurred in this run")
+    assert _halt_recoveries(stuck) == 0    # permanent-flat trap: never recovers
+    assert _halt_recoveries(fixed) >= 1    # floor lets the breaker release
+
+
 # --------------------------------------------------------------- performance ---
 def test_metrics_are_finite_and_consistent(result) -> None:
     """Core metrics compute and are internally consistent."""

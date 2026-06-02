@@ -101,3 +101,17 @@ def test_halted_blocks_sizing(risk: RiskManager) -> None:
     res = risk.position_size(100_000, 100, 5, 0.5)
     assert res.approved is False
     assert res.shares == 0
+
+
+def test_halt_uses_floor_multiplier_not_zero() -> None:
+    """Halt sizing keeps a minimum floor so equity can recover (not 0 -> frozen)."""
+    rm = RiskManager(RiskConfig(halt_floor_mult=0.25))
+    rm.state = RiskState.HALTED
+    assert rm.target_size_multiplier() == 0.25
+
+
+def test_halt_floor_default_is_nonzero() -> None:
+    """Default config no longer freezes capital to 0 on halt."""
+    rm = RiskManager(RiskConfig())
+    rm.state = RiskState.HALTED
+    assert rm.target_size_multiplier() > 0.0
