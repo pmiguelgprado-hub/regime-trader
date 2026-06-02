@@ -151,3 +151,41 @@ def test_retrain_rejects_nonconverged_fit(monkeypatch) -> None:
 
     assert sys_.retrain_from_buffer("SPY") is False
     assert sys_.hmm is old   # bad fit not installed
+
+
+def test_successful_retrain_persists_and_promotes_in_registry(tmp_path) -> None:
+    """A promoted challenger is saved and marked champion in the registry (A-4 rollback)."""
+    from core.model_registry import ModelRegistry
+
+    reg = ModelRegistry(tmp_path)
+    sys_ = _fitted_dry_system()
+    sys_.registry = reg
+    sys_.buffers["SPY"] = make_synthetic_ohlcv()
+
+    assert sys_.retrain_from_buffer("SPY") is True
+    assert reg.champion_version("SPY") is not None
+    assert reg.load_champion("SPY") is not None
+
+
+def test_challenger_rejected_when_worse_than_champion(monkeypatch) -> None:
+    """Champion-challenger gate (A-4): a challenger that explains the holdout
+    worse than the current champion is NOT promoted."""
+
+    class _WorseFit:
+        def __init__(self, cfg):
+            self.config = cfg
+            self.regime_info = {0: _ri(0, vol=0.5)}
+
+        def fit(self, feats):
+            self.metadata = SimpleNamespace(converged=True)
+
+        def mean_log_likelihood(self, feats):
+            return -1e9  # far worse than the real champion
+
+    sys_ = _fitted_dry_system()
+    sys_.buffers["SPY"] = make_synthetic_ohlcv()
+    champ = sys_.hmm
+    monkeypatch.setattr(hmm_engine, "HMMEngine", _WorseFit)
+
+    assert sys_.retrain_from_buffer("SPY") is False
+    assert sys_.hmm is champ   # champion kept

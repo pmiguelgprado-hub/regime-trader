@@ -631,6 +631,25 @@ class HMMEngine:
         engine.metadata = payload["metadata"]
         return engine
 
+    def mean_log_likelihood(self, features: pd.DataFrame) -> float:
+        """Per-bar log-likelihood of ``features`` under the fitted model.
+
+        The champion-challenger promotion score (A-4): a model that explains a
+        holdout better has a higher value. Normalized per bar so windows of
+        different lengths compare directly.
+
+        Args:
+            features: Standardized feature matrix (same columns as training).
+
+        Returns:
+            ``model.score(X) / n_bars`` (``-inf`` if empty).
+        """
+        self._check_fitted()
+        X = features[self.feature_columns].to_numpy(dtype=float)
+        if len(X) == 0:
+            return float("-inf")
+        return float(self.model.score(X)) / len(X)
+
     def get_regime_info(self, state_id: int) -> RegimeInfo:
         """Return the :class:`RegimeInfo` for a hidden-state id.
 

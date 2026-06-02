@@ -45,8 +45,10 @@ hmm:
   flicker_threshold: 4              # max regime changes in window before flagged unstable
   min_confidence: 0.55              # min posterior prob to act on a regime label
   max_age_days: 7                   # retrain when the model is older than this (startup + in-loop)
-  auto_retrain: false               # A-1: in-loop auto-retrain+propagate (OFF until A-4 gate exists;
+  auto_retrain: false               # A-1: in-loop auto-retrain+propagate (now gated by A-4 below;
                                     #   --run-once already refreshes by file age at startup)
+  challenger_tol: 0.0               # A-4: promote a refit only if its holdout log-likelihood is
+                                    #   >= champion's minus this tolerance (0 = must not regress)
 
 # ---------------------------------------------------------------------------
 # strategy — volatility-regime-based allocation

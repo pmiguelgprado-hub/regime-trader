@@ -296,20 +296,20 @@ datos recientes. **Dimensión peor cubierta hoy** — el modelo es esencialmente
       trigger_retrain("feature_drift")
   ```
 
-### A-4 · Sin gate de validación al promover modelo (champion-challenger) — **Prioridad Alta**
-- **Gap:** hoy el modelo reentrenado se guarda y se usa directamente (`main.py:701 hmm.save`). No
-  hay validación de que el nuevo modelo no degrade, ni rollback al anterior.
-- **Solución:** el modelo reentrenado entra como **challenger**; pasa walk-forward + stress sobre
-  la ventana reciente y solo **reemplaza al champion** si no degrada métricas clave (Sharpe, max
-  DD, agreement de régimen). Si no pasa, se conserva el anterior y se alerta. El registro versionado
-  (E-4) habilita el rollback.
-  ```python
-  challenger = train(recent_window)
-  if validate(challenger).sharpe >= champion_metrics.sharpe * 0.95:
-      registry.promote(challenger)               # versionado + rollback disponible
-  else:
-      alerts.warn("challenger_rejected"); keep(champion)
-  ```
+### A-4 · Gate de validación al promover modelo (champion-challenger) — **Prioridad Alta** — ✅ IMPLEMENTADO (2026-06-02)
+- **Implementado:** la promoción de un refit pasa **dos puertas** en
+  `retrain_from_buffer`: (1) convergencia, (2) **champion-challenger** —
+  `HMMEngine.mean_log_likelihood` puntúa challenger y champion sobre un holdout
+  reciente y solo se promueve si `challenger_ll ≥ champion_ll − tol` (`hmm.challenger_tol`,
+  +epsilon 1e-9 para ruido numérico); si no, se conserva el champion y se alerta.
+  **Registro versionado** `core/model_registry.py` (`save_version`/`promote`/`rollback`/
+  `load_champion`) bajo `models/<symbol>/` + puntero `champion.txt` → habilita rollback.
+  `TradingSystem(registry=...)` opcional: en una promoción exitosa guarda versión + promueve.
+  Tests: `test_model_registry.py`, `test_hmm.py::mean_log_likelihood`, `test_live_retrain.py`
+  (rechazo de challenger peor, persistencia en registro).
+- **Pendiente (más rico):** gate por **backtest** (Sharpe/maxDD) en vez de solo log-likelihood, y
+  holdout purgado (challenger no entrena el tramo de evaluación). El LL es un suelo principiado y
+  barato; el gate por métricas de trading es un follow-up.
 
 ### A-5 · Sin bucle de feedback de P&L vivo — **Prioridad Media**
 - **Gap:** el P&L realizado (una vez S-1 lo cablee de extremo a extremo) no retroalimenta nada: ni

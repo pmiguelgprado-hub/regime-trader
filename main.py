@@ -129,6 +129,7 @@ class TradingSystem:
         alerts=None,
         dashboard=None,
         dry_run: bool = True,
+        registry=None,
     ) -> None:
         """Wire the system components.
 
@@ -156,6 +157,7 @@ class TradingSystem:
         self.alerts = alerts
         self.dashboard = dashboard
         self.dry_run = dry_run
+        self.registry = registry
 
         self.symbols: list[str] = config.get("broker", {}).get("symbols", [])
         self.initial_capital = float(config.get("backtest", {}).get("initial_capital", 100000))
@@ -259,14 +261,37 @@ class TradingSystem:
             if self.alerts:
                 self.alerts.send("retrain_failed", str(exc))
             return False
-        # Minimal promotion gate (floor until A-4 champion-challenger exists): never
-        # auto-install a fit that did not converge.
+        # Promotion gate 1: never auto-install a fit that did not converge.
         if not getattr(new.metadata, "converged", False):
             logging.getLogger(__name__).warning("retrain did not converge; keeping current model")
             if self.alerts:
                 self.alerts.send("retrain_rejected", "challenger did not converge")
             return False
+        # Promotion gate 2 (A-4 champion-challenger): keep the current champion
+        # unless the challenger explains a recent holdout at least as well.
+        champion = self.hmm
+        if getattr(champion, "model", None) is not None:
+            tol = float(self.config.get("hmm", {}).get("challenger_tol", 0.0))
+            holdout = feats.tail(min(len(feats), 252))
+            try:
+                challenger_ll = new.mean_log_likelihood(holdout)
+                champion_ll = champion.mean_log_likelihood(holdout)
+            except Exception as exc:  # noqa: BLE001 - if scoring fails, stay safe
+                logging.getLogger(__name__).error("challenger eval failed; keeping champion: %s", exc)
+                return False
+            # 1e-9 epsilon absorbs floating-point noise between two equivalent fits
+            # so an essentially-identical refit still promotes.
+            if challenger_ll < champion_ll - tol - 1e-9:
+                logging.getLogger(__name__).warning(
+                    "challenger underperforms champion on holdout (%.4f < %.4f); keeping champion",
+                    challenger_ll, champion_ll)
+                if self.alerts:
+                    self.alerts.send("retrain_rejected", "challenger worse than champion on holdout")
+                return False
         self.install_model(new)
+        if self.registry is not None:
+            version = self.registry.save_version(new, symbol)
+            self.registry.promote(symbol, version)
         if self.tlog:
             self.tlog.log(self.tlog.main, "hmm_retrain_inloop",
                           f"refit {symbol} ({len(feats)} bars); propagated to orchestrator")

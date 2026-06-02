@@ -36,6 +36,15 @@ def test_fit_requires_min_train_bars(features) -> None:
         eng.fit(features)
 
 
+def test_mean_log_likelihood_higher_on_fit_data_than_noise(engine, features) -> None:
+    """Per-bar log-likelihood (the champion-challenger score) is higher on the
+    model's own data than on heavily-noised data."""
+    clean = engine.mean_log_likelihood(features)
+    noisy = features + np.random.default_rng(0).normal(0, 5, features.shape)
+    assert np.isfinite(clean)
+    assert clean > engine.mean_log_likelihood(noisy)
+
+
 def test_model_selection_picks_lowest_bic(engine) -> None:
     """Selected regime count must have the minimum BIC among candidates."""
     md = engine.metadata
