@@ -95,7 +95,8 @@ risk:
 # backtest — walk-forward allocation backtester
 # ---------------------------------------------------------------------------
 backtest:
-  slippage_pct: 0.0005              # per-fill slippage assumption (5 bps)
+  slippage_pct: 0.0005              # base slippage per unit turnover (5 bps flat floor)
+  slippage_vol_coeff: 0.0           # R-1: extra slippage per unit ATR% (0=flat/legacy; try ~0.5 for vol-realistic backtests)
   initial_capital: 100000           # starting equity (USD)
   train_window: 504                 # in-sample bars per fold (~2y); must be >= hmm.min_train_bars (252 cannot train the HMM)
   test_window: 126                  # out-of-sample bars per fold (~6mo)

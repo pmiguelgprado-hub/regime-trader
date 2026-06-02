@@ -99,6 +99,48 @@ def test_no_lookahead_in_features(_ohlcv_module) -> None:
     FeatureEngineer().assert_no_lookahead(_ohlcv_module)
 
 
+# --------------------------------------------------------------- slippage (R-1) ---
+def test_slippage_rate_floors_at_base_when_calm() -> None:
+    """Zero volatility -> slippage equals the flat base rate (no vol premium)."""
+    assert Backtester._slippage_rate(base_pct=0.0005, vol_coeff=0.5, atr_pct=0.0) == 0.0005
+
+
+def test_slippage_rate_rises_with_volatility() -> None:
+    """Higher ATR% -> slippage rises linearly above the base by vol_coeff*atr_pct."""
+    rate = Backtester._slippage_rate(base_pct=0.0005, vol_coeff=0.5, atr_pct=0.02)
+    assert rate == pytest.approx(0.0005 + 0.5 * 0.02)
+
+
+def test_volatility_slippage_wired_into_rebalance(_ohlcv_module) -> None:
+    """With vol_coeff>0 the loop charges a vol-scaled rate (>= base, premium on some bars)."""
+    res = Backtester(
+        BacktestConfig(slippage_vol_coeff=1.0),
+        HMMEngine(HMMConfig(n_candidates=[3], n_init=1)),
+        StrategyConfig(), RiskManager(RiskConfig()), FeatureEngineer(),
+    ).run({"SPY": _ohlcv_module})
+    if res.trades.empty:
+        pytest.skip("no rebalances in this run")
+    base = BacktestConfig().slippage_pct
+    eff = res.trades["slippage_cost"] / res.trades["delta"].abs()  # effective rate per trade
+    assert (eff >= base - 1e-12).all()    # never below the base floor
+    assert (eff > base + 1e-9).any()      # at least one bar paid a volatility premium
+
+
+def test_flat_slippage_unchanged_when_coeff_zero(_ohlcv_module) -> None:
+    """coeff=0 reproduces the legacy flat rate exactly (no behaviour change)."""
+    res = Backtester(
+        BacktestConfig(slippage_vol_coeff=0.0),
+        HMMEngine(HMMConfig(n_candidates=[3], n_init=1)),
+        StrategyConfig(), RiskManager(RiskConfig()), FeatureEngineer(),
+    ).run({"SPY": _ohlcv_module})
+    if res.trades.empty:
+        pytest.skip("no rebalances in this run")
+    # Reconstructed from rounded ledger columns (cost@6dp, delta@4dp), so allow
+    # rounding noise (~1e-5) — still 1000x below any real vol premium (~1e-2).
+    eff = res.trades["slippage_cost"] / res.trades["delta"].abs()
+    assert eff.values == pytest.approx(BacktestConfig().slippage_pct, abs=2e-5)
+
+
 # --------------------------------------------------------------- performance ---
 def test_metrics_are_finite_and_consistent(result) -> None:
     """Core metrics compute and are internally consistent."""

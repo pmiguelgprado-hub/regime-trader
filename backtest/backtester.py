@@ -53,7 +53,8 @@ logger = logging.getLogger(__name__)
 class BacktestConfig:
     """Configuration for the walk-forward backtester (mirrors `backtest`)."""
 
-    slippage_pct: float = 0.0005
+    slippage_pct: float = 0.0005   # base slippage per unit turnover (flat floor)
+    slippage_vol_coeff: float = 0.0  # extra slippage per unit ATR% (R-1; 0 = flat, legacy)
     initial_capital: float = 100000.0
     train_window: int = 504        # usable rows for HMM fit (>= hmm.min_train_bars)
     test_window: int = 126
@@ -213,7 +214,13 @@ class Backtester:
                 must_exit = target == 0.0 and held_weight > 0.0
                 slip_cost = 0.0
                 if abs(delta) >= self.strategy_config.rebalance_threshold or must_exit:
-                    slip_cost = abs(delta) * self.config.slippage_pct
+                    px = float(close.iloc[pos])
+                    atr = sigs[0].metadata.get("atr") if sigs else None
+                    atr_pct = (atr / px) if (atr and px > 0) else 0.0
+                    rate = self._slippage_rate(
+                        self.config.slippage_pct, self.config.slippage_vol_coeff, atr_pct
+                    )
+                    slip_cost = abs(delta) * rate
                     equity *= (1.0 - slip_cost)
                     self.risk_manager.record_trade()
                     trades.append(
@@ -291,6 +298,25 @@ class Backtester:
             folds.append((tr_s, tr_e, te_s, te_e))
             start += step
         return folds
+
+    @staticmethod
+    def _slippage_rate(base_pct: float, vol_coeff: float, atr_pct: float) -> float:
+        """Slippage rate per unit turnover, scaled by volatility (R-1).
+
+        Flat ``base_pct`` plus a volatility premium ``vol_coeff * atr_pct``. With
+        ``vol_coeff == 0`` this reduces to the legacy flat rate (no behaviour
+        change). Higher ATR%% (volatile bars) cost more to rebalance, as in real
+        markets where spreads and impact widen with volatility.
+
+        Args:
+            base_pct: Flat base slippage rate (e.g. 0.0005 = 5 bps).
+            vol_coeff: Premium per unit of ATR fraction.
+            atr_pct: ATR as a fraction of price at the rebalance bar (>= 0).
+
+        Returns:
+            Slippage rate to charge on ``abs(delta)`` turnover.
+        """
+        return base_pct + vol_coeff * max(0.0, atr_pct)
 
     def _apply_slippage(self, price: float, side: str) -> float:
         """Adjust a fill price for slippage.
