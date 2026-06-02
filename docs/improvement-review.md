@@ -116,7 +116,16 @@ Controles de riesgo, validaciones, gestión de errores y protección del capital
   equity por barra → 4. al cruzar `daily_dd_halt: 0.03` / `max_dd_from_peak: 0.10` se dispara el
   halt → 5. `close_all_positions` aplana. Registrar evidencia de cada paso.
 
-### S-2 · Sin reconexión del stream — **Prioridad Alta**
+### S-2 · Sin reconexión del stream — **Prioridad Alta** — ✅ IMPLEMENTADO (2026-06-02)
+- **Implementado:** `broker/stream_supervisor.py` — `reconnect_delay` (backoff exponencial con
+  tope), `run_with_reconnect` (reintenta el stream con backoff hasta `broker.max_reconnects`),
+  `stream_is_stale` (watchdog: feed silencioso con mercado abierto). Cableado en `run_stream`
+  (reconexión + heartbeat `_last_bar_ts`) y `TradingSystem.check_stream_health` (alerta si stale).
+  Tests: `tests/test_stream_supervisor.py`. Nota: el path desplegado es `--run-once` (sin stream
+  largo); esto blinda el path de stream.
+- (texto original del gap conservado abajo)
+
+#### Gap original
 - **Gap (= H5 del audit):** una caída del WebSocket deja al bot **ciego sin avisar**; no hay
   reconexión ni watchdog.
 - **Solución:** reconexión con backoff exponencial + **watchdog de heartbeat** sobre el timestamp

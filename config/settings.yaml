@@ -28,6 +28,8 @@ broker:
   timeframe: 1Day                   # LOCKED daily (M3): HMM + vol regimes + breakers
                                     #   are all daily-calibrated. Do NOT switch to
                                     #   intraday without re-validating the whole stack.
+  max_reconnects: 10                # S-2: stream reconnect attempts before giving up
+  max_bar_gap_sec: 300              # S-2: watchdog flags a stale feed after this silence (market open)
 
 # ---------------------------------------------------------------------------
 # hmm — Hidden Markov Model regime detection

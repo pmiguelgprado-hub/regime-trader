@@ -168,6 +168,7 @@ class TradingSystem:
         self._cur_week = None
         self._pending_stops: dict[str, str] = {}  # symbol -> bracket stop-leg id awaiting its fill
         self._last_equity: Optional[float] = None  # for per-bar MtM return fed to the breaker
+        self._last_bar_ts = None                    # S-2 watchdog heartbeat (last bar received)
         # Rolling-buffer cap (H3): min_train_bars + z-score(252)/SMA200 warmup margin.
         # Bounds memory and per-bar feature cost; also the live backfill depth.
         self._buffer_cap = int(config.get("hmm", {}).get("min_train_bars", 504)) + 260
@@ -600,13 +601,34 @@ class TradingSystem:
                 positions=len(ps.positions),
             )
 
+    def check_stream_health(self, now_ts, market_open: bool) -> bool:
+        """Whether the bar feed has gone stale (S-2 watchdog); alerts if so.
+
+        Args:
+            now_ts: Current timestamp.
+            market_open: Whether the market is open.
+
+        Returns:
+            True if stale (no bar within ``broker.max_bar_gap_sec`` while open).
+        """
+        from broker.stream_supervisor import stream_is_stale
+
+        if self._last_bar_ts is None:
+            return False
+        max_gap = float(self.config.get("broker", {}).get("max_bar_gap_sec", 300))
+        age = (pd.Timestamp(now_ts) - pd.Timestamp(self._last_bar_ts)).total_seconds()
+        stale = stream_is_stale(age, max_gap, market_open)
+        if stale and self.alerts:
+            self.alerts.send("stream_stale", f"no bar for {age:.0f}s while market open")
+        return stale
+
     def run_stream(self, market_data) -> None:  # pragma: no cover - live WebSocket
-        """Subscribe to live bars and drive the loop (thin plumbing).
+        """Subscribe to live bars and drive the loop, reconnecting on drop (S-2).
 
         Args:
             market_data: A connected :class:`~data.market_data.MarketData`.
         """
-        timeframe = self.config.get("broker", {}).get("timeframe", "1Day")
+        from broker.stream_supervisor import run_with_reconnect
 
         def on_bar(symbol, bar):
             row = pd.DataFrame(
@@ -614,11 +636,23 @@ class TradingSystem:
                   "close": bar.close, "volume": bar.volume}],
                 index=[pd.Timestamp(bar.timestamp)],
             )
+            self._last_bar_ts = pd.Timestamp(bar.timestamp)   # watchdog heartbeat
             self.ingest_bar(symbol, row)
             self.process_symbol(symbol)
             self.update_trailing_stops()
 
-        market_data.subscribe_bars(self.symbols, on_bar)
+        def _connect_and_run():
+            market_data.subscribe_bars(self.symbols, on_bar)
+
+        def _on_retry(attempt, exc):
+            if self.alerts:
+                self.alerts.send("stream_reconnect", f"attempt {attempt} after: {exc}")
+            if self.tlog:
+                self.tlog.log(self.tlog.main, "stream_reconnect",
+                              f"reconnect attempt {attempt}: {exc}", level="WARNING")
+
+        max_retries = int(self.config.get("broker", {}).get("max_reconnects", 10))
+        run_with_reconnect(_connect_and_run, max_retries=max_retries, on_retry=_on_retry)
 
     def run_cycle(self, market_data, state_path: str = STATE_SNAPSHOT) -> list[tuple]:
         """Run ONE decision cycle on the latest closed bars (daily live path).
