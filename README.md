@@ -106,6 +106,39 @@ Modes are mutually exclusive; `--live` is the default if none is given.
 Shared flags: `--symbols`, `--start`, `--end`, `--compare` (backtest only),
 `--config`.
 
+### Running it daily (paper)
+
+The strategy is **daily**-calibrated, and Alpaca's bar websocket only streams
+*minute* bars — the wrong cadence. So the live entry point is **one decision
+cycle per trading day** on the freshly-closed daily bar, not a held-open stream:
+
+```bash
+python main.py --run-once     # connect, decide on the latest daily bar, place
+                              # bracket orders, update risk, persist state, exit
+```
+
+Decisions are made on the daily **close**; bracket entry orders **queue and
+fill at the next open**. Schedule `--run-once` once per trading day with the
+bundled launchd agent (macOS):
+
+```bash
+cp deploy/com.regimetrader.runonce.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.regimetrader.runonce.plist   # weekdays 22:15 local
+launchctl unload ~/Library/LaunchAgents/com.regimetrader.runonce.plist # to stop
+```
+
+> **Run it at most once per day.** Re-running `--run-once` before the prior
+> entry order has *filled* would see a flat tracker and submit a duplicate
+> (the C4 delta gate only suppresses re-buys once the position exists). The
+> daily schedule (one run/day, fills happen at the next open in between) avoids
+> this; don't manually re-run between a queued order and its fill. launchd
+> cannot skip US market holidays — on a holiday the unchanged bar yields no
+> new order (hold).
+
+`python main.py --live` holds the minute-bar websocket open instead; it is
+**not** the right path for a daily strategy (kept for an eventual intraday
+re-validation, H5/M3).
+
 ### Dashboard (Streamlit web)
 
 The primary dashboard is a Streamlit web app (regime + confidence, portfolio
