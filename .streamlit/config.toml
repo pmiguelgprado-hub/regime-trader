@@ -1,0 +1,11 @@
+# Dark theme to match the reference dashboard.
+[theme]
+base = "dark"
+primaryColor = "#e67e22"
+backgroundColor = "#0e1117"
+secondaryBackgroundColor = "#1a1d24"
+textColor = "#fafafa"
+font = "monospace"
+
+[server]
+headless = true

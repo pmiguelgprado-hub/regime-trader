@@ -1,150 +1,209 @@
-"""Streamlit dashboard for regime-trader — the video-faithful web UI.
+"""Streamlit dashboard for regime-trader — matches the reference build's UI.
 
 Run it:
 
     streamlit run monitoring/streamlit_app.py     # http://localhost:8501
 
-Panels (mirroring the reference build): detected regime + confidence, portfolio
-value, learned regimes + allocation, risk controls (drawdown / leverage /
-circuit breakers), the signal feed, a price + regime overlay, and volume /
-confidence over time.
+Layout mirrors the video's final dashboard: a sidebar (refresh interval,
+primary symbol, view toggles), a metrics row (Mode / Equity / Cash / Market),
+Regime Detection (regime, confidence, stability, vol rank + a confidence gauge
+and runner-up states), Risk Status (drawdown / leverage + circuit-breaker
+banner), the learned-regime table, the portfolio, and a price panel.
 
-Live state comes from ``state_snapshot.json`` (written by the trading loop);
-the overlay/distribution charts use the latest ``backtest_output/<symbol>/``
-artifacts for context. All panels degrade to placeholders when data is absent
-(e.g. a fresh system or a closed market), so the page never crashes.
+Live account / positions / price are pulled from Alpaca on every refresh (real
+time); the regime + risk detail come from ``state_snapshot.json`` (written by
+the daily ``--run-once`` cycle). Everything degrades to placeholders when a
+source is missing, so the page never crashes.
 
-The data layer lives in ``monitoring.dashboard_data`` (pure + unit-tested);
-this module is only the view and is never imported by the test suite.
+The data layer is ``monitoring.dashboard_data`` (pure + unit-tested); this file
+is the view and is never imported by the test suite.
 """
 
 from __future__ import annotations
 
-import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
 from monitoring.dashboard_data import (
-    load_equity_curve,
+    live_account,
+    live_positions,
+    live_price,
     load_regime_history,
     load_snapshot,
-    regime_distribution,
     risk_panel,
 )
 
-REGIME_COLORS = {
-    "crash": "#b00020", "bear": "#e06c00", "neutral": "#9e9e9e",
-    "bull": "#2e7d32", "euphoria": "#1565c0",
-}
+st.set_page_config(page_title="Regime Trader", layout="wide",
+                   initial_sidebar_state="expanded")
 
 
-def _symbol() -> str:
-    """Resolve the symbol to chart (sidebar selector, defaults to SPY)."""
-    return st.sidebar.text_input("Symbol", value="SPY").strip().upper() or "SPY"
+def _confidence_gauge(pct: float, regime: str) -> go.Figure:
+    """Donut/gauge of the current regime confidence (green/orange/red arc)."""
+    color = "#2ecc71" if pct >= 80 else "#e67e22" if pct >= 50 else "#e74c3c"
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=pct,
+        number={"suffix": "%", "font": {"size": 40, "color": "#fafafa"}},
+        title={"text": f"Regime: {regime.upper()}", "font": {"size": 16, "color": "#fafafa"}},
+        gauge={
+            "axis": {"range": [0, 100], "tickcolor": "#888"},
+            "bar": {"color": color, "thickness": 0.32},
+            "bgcolor": "rgba(0,0,0,0)",
+            "borderwidth": 0,
+            "steps": [
+                {"range": [0, 50], "color": "rgba(231,76,60,0.15)"},
+                {"range": [50, 80], "color": "rgba(230,126,34,0.15)"},
+                {"range": [80, 100], "color": "rgba(46,204,113,0.15)"},
+            ],
+        },
+    ))
+    fig.update_layout(height=260, margin=dict(l=20, r=20, t=50, b=10),
+                      paper_bgcolor="rgba(0,0,0,0)", font={"color": "#fafafa"})
+    return fig
 
 
-def _header(panel: dict) -> None:
-    st.title("regime-trader — live dashboard")
-    st.caption(f"snapshot: {panel['timestamp']}  ·  paper account")
+def _metrics(acct: dict | None, snap: dict) -> None:
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Detected regime", str(panel["regime"]).upper())
-    c2.metric("Risk state", str(panel["risk_state"]).upper())
-    c3.metric("Equity peak", f"${panel['equity_peak']:,.0f}")
-    c4.metric("Trades today", panel["daily_trades"])
+    if acct:
+        c1.metric("Mode", acct["mode"])
+        c2.metric("Equity", f"${acct['equity']:,.2f}")
+        c3.metric("Cash", f"${acct['cash']:,.2f}")
+        c4.metric("Market", "OPEN" if acct["market_open"] else "CLOSED")
+    else:
+        c1.metric("Mode", "—")
+        c2.metric("Equity", f"${snap.get('equity_peak', 0):,.2f}")
+        c3.metric("Cash", "—")
+        c4.metric("Market", "—")
+        st.caption("⚠️ live account unavailable (no creds / market data) — showing last snapshot")
 
 
-def _risk_controls(panel: dict) -> None:
-    st.subheader("Risk controls")
-    state = str(panel["risk_state"]).lower()
-    msg = {"normal": st.success, "reduced": st.warning, "halted": st.error}.get(state, st.info)
-    msg(f"Circuit breaker: {state.upper()}  ·  breaker events: {panel['breaker_events']}")
-    st.caption("Tiers: daily -2% reduce / -3% halt · weekly -5% / -7% · peak -10% halt+lock")
+def _regime_detection(snap: dict) -> None:
+    st.subheader("Regime Detection")
+    reg = snap.get("regime") or {}
+    name = reg.get("name", snap.get("last_regime") or "—")
+    conf = float(reg.get("confidence", 0.0)) * 100.0
+    a, b, c, d = st.columns(4)
+    a.metric("Regime", str(name).upper())
+    b.metric("Confidence", f"{conf:.1f}%")
+    c.metric("Stability", f"{reg.get('stability_bars', 0)} bars")
+    d.metric("Vol Rank", f"{reg.get('vol_rank', 0.0):.2f}")
+    if reg.get("confirmed"):
+        st.success("✓ CONFIRMED")
+    elif reg:
+        st.warning("… stabilizing")
+    if reg:
+        st.plotly_chart(_confidence_gauge(conf, str(name)), use_container_width=True)
+        runners = reg.get("runner_ups") or {}
+        others = [f"{k.upper()}: {v:.2e}" for k, v in list(runners.items())[1:5]]
+        if others:
+            st.caption("Runner-up states:  " + "   |   ".join(others))
 
 
-def _signal_feed(snapshot: dict) -> None:
+def _risk_status(snap: dict) -> None:
+    st.subheader("Risk Status")
+    rk = snap.get("risk") or {}
+    daily = rk.get("daily_dd", 0.0) * 100
+    peak = rk.get("peak_dd", 0.0) * 100
+    lev_lim = rk.get("leverage_limit", 1.25)
+    a, b, c = st.columns(3)
+    a.metric("Daily DD", f"{daily:.2f}%", help=f"limit {rk.get('daily_dd_limit', 0.03):.0%}")
+    b.metric("Peak DD", f"{peak:.2f}%", help=f"limit {rk.get('peak_dd_limit', 0.10):.0%}")
+    c.metric("Leverage cap", f"{lev_lim:.2f}x")
+    state = str(rk.get("state", snap.get("risk_state", "—"))).lower()
+    if rk.get("breakers_clear", state == "normal"):
+        st.success("All circuit breakers clear")
+    elif state == "reduced":
+        st.warning("Circuit breaker: REDUCED — sizing halved")
+    else:
+        st.error(f"Circuit breaker: {state.upper()} — trading halted / liquidating")
+
+
+def _regime_table(snap: dict) -> None:
+    table = snap.get("regime_table") or []
+    if table:
+        st.dataframe(table, use_container_width=True, hide_index=True)
+
+
+def _portfolio(positions: list) -> None:
+    st.subheader("Portfolio")
+    if not positions:
+        st.info("No open positions.")
+        return
+    rows = [{
+        "symbol": p.get("symbol"), "qty": p.get("qty"),
+        "avg_entry": p.get("avg_entry_price"), "price": p.get("current_price"),
+        "market_value": p.get("market_value"), "unrealized_pnl": p.get("unrealized_pl"),
+    } for p in positions]
+    st.dataframe(rows, use_container_width=True, hide_index=True)
+
+
+def _signal_feed(snap: dict) -> None:
     st.subheader("Signal feed")
-    signals = snapshot.get("recent_signals") or []
-    if not signals:
-        st.info("No signals yet (fresh system or market closed).")
+    sigs = snap.get("recent_signals") or []
+    if sigs:
+        st.dataframe(sigs, use_container_width=True, hide_index=True)
+    else:
+        st.info("No signals yet.")
+
+
+def _price(symbol: str, show: bool) -> None:
+    if not show:
         return
-    st.dataframe(pd.DataFrame(signals), use_container_width=True, hide_index=True)
+    st.subheader(f"{symbol} Price")
+    df = live_price(symbol)
+    if df is None or df.empty:
+        df = load_regime_history(symbol)
+    if df is not None and not df.empty and "close" in df:
+        st.line_chart(df["close"])
+    else:
+        st.info(f"No price data for {symbol}.")
 
 
-def _price_regime_overlay(symbol: str, rh: pd.DataFrame | None) -> None:
-    st.subheader("Price + regime overlay")
-    if rh is None or rh.empty or "asset_return" not in rh:
-        st.info(f"No regime history for {symbol} (run a backtest to populate).")
-        return
-    df = rh.copy()
-    df["price"] = (1.0 + df["asset_return"].fillna(0.0)).cumprod() * 100.0
-    df["regime"] = df["regime"].astype(str)
-    try:
-        import altair as alt
+def render(symbol: str, toggles: dict) -> None:
+    """Draw the whole dashboard from live + snapshot state (re-run on refresh)."""
+    snap = load_snapshot()
+    acct = live_account()
+    positions = live_positions()
 
-        chart = (
-            alt.Chart(df.reset_index().rename(columns={df.index.name or "index": "date"}))
-            .mark_circle(size=18)
-            .encode(
-                x=alt.X(f"{df.reset_index().columns[0]}:T", title="date"),
-                y=alt.Y("price:Q", title="price (indexed=100)"),
-                color=alt.Color("regime:N",
-                                scale=alt.Scale(domain=list(REGIME_COLORS),
-                                                range=list(REGIME_COLORS.values())),
-                                title="regime"),
-                tooltip=["regime:N", "price:Q"],
-            )
-            .properties(height=320)
-        )
-        st.altair_chart(chart, use_container_width=True)
-    except Exception:  # noqa: BLE001 - charting is best-effort
-        st.line_chart(df["price"])
-
-
-def _volume_confidence(rh: pd.DataFrame | None) -> None:
-    st.subheader("Allocation & confidence over time")
-    if rh is None or rh.empty:
-        st.info("No history to chart yet.")
-        return
-    cols = [c for c in ("weight", "regime_prob") if c in rh]
-    if cols:
-        st.line_chart(rh[cols])
-
-
-def _learned_regimes(rh: pd.DataFrame | None) -> None:
-    st.subheader("Learned regimes")
-    dist = regime_distribution(rh)
-    if dist.empty:
-        st.info("Regimes appear once the model has classified some bars.")
-        return
-    st.bar_chart(dist)
-
-
-def _portfolio(symbol: str) -> None:
-    eq = load_equity_curve(symbol)
-    if eq is not None and "equity" in eq:
-        st.subheader("Equity curve (latest backtest)")
-        st.line_chart(eq["equity"])
-
-
-def main() -> None:
-    """Render the full dashboard (called when run via ``streamlit run``)."""
-    st.set_page_config(page_title="regime-trader", layout="wide")
-    symbol = _symbol()
-    snapshot = load_snapshot()
-    panel = risk_panel(snapshot)
-    rh = load_regime_history(symbol)
-
-    _header(panel)
+    st.title("⚡ Regime Trader")
+    st.caption("HMM regime detection · Alpaca execution · walk-forward validated")
+    _metrics(acct, snap)
     st.divider()
     left, right = st.columns([2, 1])
     with left:
-        _price_regime_overlay(symbol, rh)
-        _volume_confidence(rh)
+        _regime_detection(snap)
     with right:
-        _risk_controls(panel)
-        _learned_regimes(rh)
+        _risk_status(snap)
     st.divider()
-    _portfolio(symbol)
-    _signal_feed(snapshot)
+    _regime_table(snap)
+    _portfolio(positions)
+    if toggles.get("price"):
+        _price(symbol, True)
+    if toggles.get("regime_history"):
+        rh = load_regime_history(symbol)
+        if rh is not None and {"regime_prob", "weight"} & set(rh):
+            st.subheader("Regime history")
+            st.line_chart(rh[[c for c in ("regime_prob", "weight") if c in rh]])
+    if toggles.get("logs"):
+        _signal_feed(snap)
 
 
-main()
+# ----------------------------------------------------------------- sidebar ---
+st.sidebar.title("Regime Trader")
+interval = st.sidebar.slider("Refresh interval (s)", 2, 60, 10)
+symbol = st.sidebar.text_input("Primary symbol", value="SPY").strip().upper() or "SPY"
+toggles = {
+    "price": st.sidebar.checkbox("Show price chart", value=True),
+    "regime_history": st.sidebar.checkbox("Show regime history", value=True),
+    "logs": st.sidebar.checkbox("Show signal feed / logs", value=False),
+}
+st.sidebar.caption("Live account/positions/price refresh on the interval; "
+                   "regime + risk come from the daily snapshot.")
+
+
+@st.fragment(run_every=interval)
+def _live():
+    render(symbol, toggles)
+
+
+_live()

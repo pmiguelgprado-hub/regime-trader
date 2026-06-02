@@ -548,8 +548,70 @@ class TradingSystem:
             "breaker_events": len(self.risk.breaker.get_history()),
             "recent_signals": self.recent_signals[-20:],
         }
+        try:
+            state.update(self._dashboard_block())
+        except Exception:  # noqa: BLE001 - dashboard extras are best-effort
+            logging.getLogger(__name__).exception("dashboard block failed")
         Path(path).write_text(json.dumps(state, indent=2, default=str))
         logging.getLogger(__name__).info("Saved state snapshot to %s", path)
+
+    def _dashboard_block(self) -> dict:
+        """Rich live state for the Streamlit dashboard (regime detail, risk,
+        per-regime table) — mirrors the reference video's panels."""
+        infos = (getattr(self.hmm, "regime_info", {}) or {}) if self.hmm else {}
+        block: dict = {}
+
+        table = []
+        for sid, ri in sorted(infos.items()):
+            nm = ri.regime_name.value if hasattr(ri.regime_name, "value") else str(ri.regime_name)
+            table.append({
+                "id": sid, "name": nm,
+                "exp_return": round(ri.expected_return, 4),
+                "exp_vol": round(ri.expected_volatility, 4),
+                "strategy": ri.recommended_strategy_type,
+                "max_leverage": ri.max_leverage_allowed,
+            })
+        block["regime_table"] = table
+
+        reg = self.last_regime
+        if reg is not None:
+            sp = getattr(reg, "state_probabilities", None)
+            probs = list(sp) if sp is not None and len(sp) else []
+            runner: dict[str, float] = {}
+            for i in sorted(range(len(probs)), key=lambda j: probs[j], reverse=True):
+                ri = infos.get(i)
+                nm = ri.regime_name.value if (ri and hasattr(ri.regime_name, "value")) else f"state{i}"
+                runner[nm] = float(probs[i])
+            vols = sorted(ri.expected_volatility for ri in infos.values())
+            cur = infos.get(reg.state_id)
+            vol_rank = (vols.index(cur.expected_volatility) / (len(vols) - 1)
+                        if cur and len(vols) > 1 else 0.0)
+            block["regime"] = {
+                "name": reg.label.value if hasattr(reg.label, "value") else str(reg.label),
+                "confidence": float(reg.probability),
+                "stability_bars": int(reg.consecutive_bars),
+                "confirmed": bool(reg.is_confirmed),
+                "vol_rank": round(vol_rank, 2),
+                "runner_ups": runner,
+            }
+
+        b = self.risk.breaker
+        peak = getattr(b, "_peak_equity", 0.0) or 0.0
+        eq = self._last_equity or self.initial_capital
+        peak_dd = (peak - eq) / peak if peak > 0 else 0.0
+        c = self.risk.config
+        block["risk"] = {
+            "state": self.risk.state.value,
+            "daily_dd": round(-min(getattr(b, "_daily_ret", 0.0), 0.0), 4),
+            "daily_dd_limit": c.daily_dd_halt,
+            "weekly_dd": round(-min(getattr(b, "_weekly_ret", 0.0), 0.0), 4),
+            "weekly_dd_limit": c.weekly_dd_halt,
+            "peak_dd": round(max(peak_dd, 0.0), 4),
+            "peak_dd_limit": c.max_dd_from_peak,
+            "leverage_limit": c.max_leverage,
+            "breakers_clear": self.risk.state.value == "normal",
+        }
+        return block
 
     def load_state(self, path: str = STATE_SNAPSHOT) -> Optional[dict]:
         """Restore recovery state if a snapshot exists.

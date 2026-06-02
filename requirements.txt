@@ -21,7 +21,8 @@ python-dotenv==1.2.2
 
 # --- Dashboards ---
 streamlit==1.58.0          # web dashboard: streamlit run monitoring/streamlit_app.py
-altair==6.1.0              # regime-colored charts (used directly by streamlit_app)
+plotly==6.7.0              # regime-confidence gauge in the dashboard
+altair==6.1.0              # charts
 rich==15.0.0               # legacy terminal dashboard / headless renderer
 
 # --- Testing (dev) ---

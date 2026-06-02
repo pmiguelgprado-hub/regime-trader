@@ -69,6 +69,32 @@ def test_run_cycle_persists_state(tmp_path) -> None:
     assert snap.exists()
 
 
+def test_snapshot_has_dashboard_fields(tmp_path) -> None:
+    """The snapshot carries the rich regime/risk/regime-table the dashboard needs."""
+    import json
+
+    sys_ = _fitted_dry_system()
+    fake_md = FakeMarketData({"SPY": make_synthetic_ohlcv()})
+    snap = tmp_path / "snap.json"
+    sys_.run_cycle(fake_md, state_path=str(snap))
+    s = json.loads(snap.read_text())
+
+    assert "regime" in s
+    r = s["regime"]
+    assert {"name", "confidence", "stability_bars", "confirmed", "vol_rank",
+            "runner_ups"} <= set(r)
+    assert 0.0 <= r["confidence"] <= 1.0
+    assert isinstance(r["runner_ups"], dict) and r["runner_ups"]
+
+    assert "risk" in s
+    assert {"state", "daily_dd", "peak_dd", "peak_dd_limit", "leverage_limit",
+            "breakers_clear"} <= set(s["risk"])
+
+    assert s["regime_table"]
+    assert {"id", "name", "exp_return", "exp_vol", "strategy",
+            "max_leverage"} <= set(s["regime_table"][0])
+
+
 def test_run_cycle_skips_symbols_without_history(tmp_path) -> None:
     """A symbol with no history is skipped, not fatal."""
     sys_ = _fitted_dry_system()

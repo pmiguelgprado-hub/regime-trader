@@ -93,6 +93,57 @@ def load_equity_curve(symbol: str, base: str = DEFAULT_BASE) -> Optional[pd.Data
     return _read_csv(symbol, "equity_curve.csv", base)
 
 
+def live_account() -> Optional[dict[str, Any]]:
+    """Pull live account state from Alpaca for the real-time panels.
+
+    Returns:
+        ``{mode, equity, cash, market_open}`` or None if creds are missing or
+        the broker is unreachable (the dashboard then falls back to the
+        snapshot).
+    """
+    try:
+        from broker.alpaca_client import AlpacaClient, AlpacaConfig
+
+        cfg = AlpacaConfig.from_env()
+        client = AlpacaClient(cfg)
+        client.connect()
+        acct = client.get_account()
+        return {
+            "mode": "PAPER" if cfg.paper else "LIVE",
+            "equity": float(acct["equity"]),
+            "cash": float(acct["cash"]),
+            "market_open": bool(client.is_market_open()),
+        }
+    except Exception:  # noqa: BLE001 - dashboard degrades to the snapshot
+        return None
+
+
+def live_positions() -> list[dict[str, Any]]:
+    """Pull open positions from Alpaca (empty list if none/unreachable)."""
+    try:
+        from broker.alpaca_client import AlpacaClient, AlpacaConfig
+
+        client = AlpacaClient(AlpacaConfig.from_env())
+        client.connect()
+        return list(client.get_positions() or [])
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def live_price(symbol: str, lookback_bars: int = 180,
+               timeframe: str = "1Day") -> Optional[pd.DataFrame]:
+    """Pull recent OHLCV from Alpaca for the price panel (None if unreachable)."""
+    try:
+        from broker.alpaca_client import AlpacaClient, AlpacaConfig
+        from data.market_data import MarketData
+
+        client = AlpacaClient(AlpacaConfig.from_env())
+        client.connect()
+        return MarketData(client).get_history(symbol, timeframe, lookback_bars)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def regime_distribution(regime_history: Optional[pd.DataFrame]) -> pd.Series:
     """Count bars per regime for the learned-regimes panel.
 
