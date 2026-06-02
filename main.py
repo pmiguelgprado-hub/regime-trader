@@ -218,6 +218,84 @@ class TradingSystem:
                           f"seeded {len(self.buffers)} buffers (~{lookback} bars)")
         return lookback
 
+    # ----------------------------------------------------- model lifecycle ---
+    def install_model(self, new_hmm) -> None:
+        """Swap the live HMM and propagate its regime map to the orchestrator (A-1).
+
+        A refit that is not pushed into the orchestrator leaves the vol-rank
+        ``regime_to_strategy`` map pointing at the *previous* model's states.
+        Always rewire via ``update_regime_infos`` after replacing the engine.
+
+        Args:
+            new_hmm: A freshly fitted :class:`~core.hmm_engine.HMMEngine`.
+        """
+        self.hmm = new_hmm
+        self.orchestrator.update_regime_infos(new_hmm.regime_info)
+
+    def retrain_from_buffer(self, symbol: str) -> bool:
+        """Refit the HMM on a symbol's live buffer and install it (A-1).
+
+        Args:
+            symbol: Symbol whose rolling buffer supplies the training window.
+
+        Returns:
+            True if a new model was fitted and installed; False if there is too
+            little history to train (current model left untouched).
+        """
+        from core.hmm_engine import HMMEngine
+
+        buf = self.buffers.get(symbol)
+        if buf is None or buf.empty:
+            return False
+        feats = self.fe.build_features(buf)
+        cfg = self.hmm.config
+        if len(feats) < cfg.min_train_bars:
+            return False
+        new = HMMEngine(cfg)
+        try:
+            new.fit(feats)
+        except Exception as exc:  # noqa: BLE001 - keep the current model on failure
+            logging.getLogger(__name__).error("retrain failed; keeping current model: %s", exc)
+            if self.alerts:
+                self.alerts.send("retrain_failed", str(exc))
+            return False
+        self.install_model(new)
+        if self.tlog:
+            self.tlog.log(self.tlog.main, "hmm_retrain_inloop",
+                          f"refit {symbol} ({len(feats)} bars); propagated to orchestrator")
+        return True
+
+    def _model_age_days(self) -> float:
+        """Age of the in-memory model in days (``inf`` if unknown)."""
+        md = getattr(self.hmm, "metadata", None)
+        if not md or not getattr(md, "training_date", None):
+            return float("inf")
+        try:
+            trained = datetime.fromisoformat(md.training_date)
+        except ValueError:
+            return float("inf")
+        if trained.tzinfo is None:
+            trained = trained.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - trained).total_seconds() / 86400.0
+
+    def maybe_retrain(self, symbol: str) -> bool:
+        """Retrain in-loop when the in-memory model is stale by age (A-1).
+
+        The startup file-age check never fires again in a long-running loop; this
+        refreshes the *in-memory* model (and propagates it) once it exceeds
+        ``hmm.max_age_days``.
+
+        Args:
+            symbol: Symbol buffer to retrain from.
+
+        Returns:
+            True if a retrain happened this call.
+        """
+        max_age = float(self.config.get("hmm", {}).get("max_age_days", HMM_MAX_AGE_DAYS))
+        if self._model_age_days() <= max_age:
+            return False
+        return self.retrain_from_buffer(symbol)
+
     @staticmethod
     def _rebalance_order(
         target_shares: int, held_shares: int,
@@ -523,6 +601,8 @@ class TradingSystem:
             All ``(Signal, RiskDecision)`` produced this cycle.
         """
         self.seed_buffers(market_data)   # latest daily bars (capped, symbol-tolerant)
+        if self.symbols:
+            self.maybe_retrain(self.symbols[0])  # A-1: refresh stale in-memory model + propagate
         results: list[tuple] = []
         for sym in self.symbols:
             results.extend(self.process_symbol(sym))
