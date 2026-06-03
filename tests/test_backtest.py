@@ -268,3 +268,17 @@ def test_calm_flag_uses_vol_rank_cutoff():
     assert Backtester._calm_flag(orch, 2) is False           # high vol (>=0.67) -> not calm
     assert Backtester._calm_flag(orch, 99) is False          # unknown -> conservative
     assert HIGH_VOL_MIN == 0.67
+
+
+def test_cash_credited_return_pays_rf_on_idle_and_charges_leverage():
+    """Cash credit: idle capital earns rf; levered excess is charged rf financing."""
+    from backtest.backtester import Backtester
+    rf_daily = 0.0001
+    # half invested -> half the asset P&L + rf on the idle half
+    assert abs(Backtester._cash_credited_return(0.0, 0.5, rf_daily) - 0.5 * rf_daily) < 1e-15
+    # fully invested -> no cash term
+    assert Backtester._cash_credited_return(0.01, 1.0, rf_daily) == 0.01
+    # levered 1.25x -> charged rf on the 0.25 borrowed
+    assert abs(Backtester._cash_credited_return(0.02, 1.25, rf_daily) - (0.02 - 0.25 * rf_daily)) < 1e-15
+    # rf_daily == 0 (default/off) -> identity
+    assert Backtester._cash_credited_return(0.013, 0.4, 0.0) == 0.013

@@ -61,6 +61,9 @@ class BacktestConfig:
     test_window: int = 126
     step_size: int = 126
     risk_free_rate: float = 0.045
+    credit_cash_rf: bool = False   # credit idle cash at rf (and charge rf on levered
+                                   #   excess). Default False = legacy (idle cash earns 0).
+                                   #   Fair Sharpe vs 100%-invested buy&hold needs this on.
     max_leverage: float = 1.25     # hard ceiling on target weight
 
 
@@ -156,6 +159,7 @@ class Backtester:
         cap = self.config.initial_capital
         equity = cap
         held_weight = 0.0
+        rf_daily = (self.config.risk_free_rate / 252.0) if self.config.credit_cash_rf else 0.0
         self.risk_manager.reset()  # fresh posture/peak for this run
 
         eq_idx: list[pd.Timestamp] = []
@@ -192,8 +196,9 @@ class Backtester:
                 state = test_states[k]
 
                 # 1) realize prior bar's weight against this bar's asset return
+                #    (idle cash earns rf / leverage is charged rf when credit_cash_rf)
                 r = float(asset_ret.iloc[pos])
-                port_ret = held_weight * r
+                port_ret = self._cash_credited_return(held_weight * r, held_weight, rf_daily)
                 equity *= (1.0 + port_ret)
 
                 # 2) update circuit breakers from realized P&L
@@ -423,6 +428,26 @@ class Backtester:
         choices = [orch._low, orch._mid, orch._high]
         for rid in list(orch.regime_to_strategy):
             orch.regime_to_strategy[rid] = choices[int(rng.integers(0, 3))]
+
+    @staticmethod
+    def _cash_credited_return(port_ret: float, weight: float, rf_daily: float) -> float:
+        """Add the cash/financing term to a bar's portfolio return.
+
+        Idle capital ``(1 - weight)`` earns the daily risk-free rate; levered
+        exposure (``weight > 1``) is charged rf on the borrowed excess. With
+        ``rf_daily == 0`` this is the identity (legacy: idle cash earns nothing).
+        Needed for a fair Sharpe vs a 100%-invested buy&hold, since the Sharpe
+        hurdle subtracts rf from both but a de-risked book holds cash.
+
+        Args:
+            port_ret: Invested P&L this bar (``weight * asset_return``).
+            weight: Held portfolio weight this bar.
+            rf_daily: Daily risk-free rate (0 to disable).
+
+        Returns:
+            Portfolio return including the cash/financing term.
+        """
+        return port_ret + (1.0 - weight) * rf_daily
 
     @staticmethod
     def _calm_flag(orch: "StrategyOrchestrator", state_id: int) -> bool:
