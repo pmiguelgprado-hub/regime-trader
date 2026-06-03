@@ -491,6 +491,7 @@ class RiskManager:
         equity: float,
         daily_return: float,
         weekly_return: float,
+        calm: bool = True,
     ) -> RiskState:
         """Recompute risk posture from drawdown breakers (per-bar, non-latching).
 
@@ -537,7 +538,23 @@ class RiskManager:
         elif weekly_loss >= c.weekly_dd_reduce:
             escalate(RiskState.REDUCED, f"weekly DD {weekly_loss:.2%}>=reduce {c.weekly_dd_reduce:.2%}")
 
-        if peak_dd >= c.max_dd_from_peak:
+        peak_breached = peak_dd >= c.max_dd_from_peak
+        # Vol-normalization re-entry (opt-in, K>0): once the peak-DD halt is engaged,
+        # release it after `peak_reentry_calm_bars` consecutive calm bars instead of
+        # waiting for equity to recover the monotonic peak — which reduced exposure
+        # prevents, causing the permanent-flat trap. On release, reset the peak to the
+        # current equity (fresh reference) so a stale high peak can't re-halt instantly;
+        # a fresh 10% drawdown from here re-engages (protection preserved).
+        if peak_breached and c.peak_reentry_calm_bars > 0:
+            self._calm_streak = self._calm_streak + 1 if calm else 0
+            if self._calm_streak >= c.peak_reentry_calm_bars:
+                self._equity_peak = equity
+                self._calm_streak = 0
+                peak_breached = False
+        else:
+            self._calm_streak = 0
+
+        if peak_breached:
             escalate(RiskState.HALTED, f"peak DD {peak_dd:.2%}>=max {c.max_dd_from_peak:.2%}")
 
         if state is not self.state:

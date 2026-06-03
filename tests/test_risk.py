@@ -126,3 +126,45 @@ def test_reentry_config_default_disabled_and_streak_resets() -> None:
     rm._calm_streak = 4
     rm.reset()
     assert rm._calm_streak == 0
+
+
+def _drive_to_peak_halt(rm: RiskManager) -> RiskManager:
+    """Push equity down ~12% from a 100k peak so the peak-DD breaker engages."""
+    rm.update_drawdown_state(equity=100_000.0, daily_return=0.0, weekly_return=0.0, calm=True)
+    # the crash bar that triggers the halt is high-vol, not calm
+    st = rm.update_drawdown_state(equity=88_000.0, daily_return=-0.12, weekly_return=-0.12, calm=False)
+    assert st is RiskState.HALTED
+    return rm
+
+
+def test_legacy_peak_halt_latches_when_disabled() -> None:
+    """K=0 (default): with reduced exposure equity stays below peak -> stays HALTED."""
+    rm = _drive_to_peak_halt(RiskManager(RiskConfig()))  # K=0
+    for _ in range(20):
+        st = rm.update_drawdown_state(equity=89_000.0, daily_return=0.0,
+                                      weekly_return=0.0, calm=True)
+    assert st is RiskState.HALTED
+
+
+def test_calm_streak_releases_peak_halt_and_resets_peak() -> None:
+    """K=3: 3 consecutive calm bars release the peak halt without recovering the peak."""
+    rm = _drive_to_peak_halt(RiskManager(RiskConfig(peak_reentry_calm_bars=3)))
+    s1 = rm.update_drawdown_state(equity=89_000.0, daily_return=0.0, weekly_return=0.0, calm=True)
+    s2 = rm.update_drawdown_state(equity=89_000.0, daily_return=0.0, weekly_return=0.0, calm=True)
+    assert s1 is RiskState.HALTED and s2 is RiskState.HALTED   # streak 1,2 < 3
+    s3 = rm.update_drawdown_state(equity=89_000.0, daily_return=0.0, weekly_return=0.0, calm=True)
+    assert s3 is RiskState.NORMAL                              # streak hit 3 -> released
+    assert rm._equity_peak == 89_000.0                        # peak reset to current
+    assert rm._calm_streak == 0
+
+
+def test_high_vol_does_not_release_and_resets_streak() -> None:
+    """Non-calm bars never accumulate; high-vol keeps the peak halt engaged."""
+    rm = _drive_to_peak_halt(RiskManager(RiskConfig(peak_reentry_calm_bars=3)))
+    rm.update_drawdown_state(equity=89_000.0, daily_return=0.0, weekly_return=0.0, calm=True)
+    rm.update_drawdown_state(equity=89_000.0, daily_return=0.0, weekly_return=0.0, calm=True)
+    st = rm.update_drawdown_state(equity=89_000.0, daily_return=0.0, weekly_return=0.0, calm=False)
+    assert st is RiskState.HALTED and rm._calm_streak == 0
+    rm.update_drawdown_state(equity=89_000.0, daily_return=0.0, weekly_return=0.0, calm=True)
+    st = rm.update_drawdown_state(equity=89_000.0, daily_return=0.0, weekly_return=0.0, calm=True)
+    assert st is RiskState.HALTED
