@@ -258,6 +258,7 @@ class Backtester:
                         confirmed=state.is_confirmed,
                         flickering=bool(flicker_flags[k]),
                         weight=held_weight,
+                        vol_rank=orch.vol_rank.get(state.state_id, 1.0),
                         risk_state=self.risk_manager.state.value,
                         asset_return=r,
                         port_return=net_ret,
@@ -330,6 +331,87 @@ class Backtester:
             turnover = sum(abs(w.get(s, 0.0) - prev_w[s]) for s in symbols)
             equity *= (1.0 - turnover * self.config.slippage_pct)
             prev_w = {s: w.get(s, 0.0) for s in symbols}
+            eq_val.append(equity)
+            weight_rows.append(dict(prev_w))
+
+        eq = pd.Series(eq_val, index=idx, name="equity")
+        if return_weights:
+            return eq, pd.DataFrame(weight_rows, index=idx)
+        return eq
+
+    def run_rotation(
+        self,
+        frames: dict[str, pd.DataFrame],
+        rot_cfg: "RotationConfig",
+        proxy: str | None = None,
+        return_weights: bool = False,
+    ):
+        """Cross-asset regime rotation backtest (vía B).
+
+        The market regime is detected on the **proxy** via the existing single-asset
+        walk-forward (causal, refit per fold). Each OOS bar, the proxy regime's
+        *clean volatility tier* (``vol_rank``, NOT the halt-adjusted weight) maps to a
+        cross-asset allocation via :func:`~core.asset_rotation.rotation_weights`
+        (equities in risk-on, bonds+gold+cash in risk-off). A volatility target scales
+        the risky book; the unallocated remainder is an explicit cash sleeve credited
+        at the risk-free rate. Slippage is charged on per-name turnover.
+
+        Taking only the tier (not the proxy's halt-adjusted weight) keeps the rotation
+        book's risk to a single, non-latching layer (the vol target) and avoids
+        re-importing the halt-latch pathology this project escaped.
+
+        Args:
+            frames: ``{symbol: OHLCV}`` for every ``rot_cfg.symbols`` and the proxy.
+            rot_cfg: Frozen rotation configuration (the pre-registered knobs).
+            proxy: Regime proxy symbol (defaults to the first frame key).
+            return_weights: If True, also return the per-bar weight DataFrame.
+
+        Returns:
+            Portfolio equity ``Series`` (or ``(equity, weights_df)`` if requested).
+        """
+        from core.asset_rotation import rotation_weights, vol_target_scale
+
+        proxy = proxy or next(iter(frames))
+        base = self.run({proxy: frames[proxy]})       # causal regime + vol_rank per bar
+        vr = base.regime_history["vol_rank"]
+        idx = vr.index
+        symbols = rot_cfg.symbols
+        missing = [s for s in symbols if s not in frames]
+        if missing:
+            raise ValueError(f"missing price frames for rotation symbols: {missing}")
+        rets = {
+            s: frames[s]["close"].pct_change().reindex(idx).fillna(0.0).to_numpy()
+            for s in symbols
+        }
+        rf_daily = (self.config.risk_free_rate / 252.0) if self.config.credit_cash_rf else 0.0
+
+        equity = self.config.initial_capital
+        eq_val: list[float] = []
+        weight_rows: list[dict] = []
+        port_hist: list[float] = []
+        prev_w = {s: 0.0 for s in symbols}
+
+        for t in range(len(idx)):
+            # 1) realize prior weights against this bar's returns; idle cash earns rf
+            risky_ret = sum(prev_w[s] * rets[s][t] for s in symbols)
+            cash_w = 1.0 - sum(prev_w.values())
+            port_ret = risky_ret + cash_w * rf_daily
+            equity *= (1.0 + port_ret)
+            port_hist.append(port_ret)
+
+            # 2) target weights for next bar: tier -> rotation map, scaled to vol target
+            base_w = rotation_weights(float(vr.iloc[t]), rot_cfg)
+            k = vol_target_scale(
+                port_hist[-rot_cfg.vol_window:],
+                rot_cfg.target_vol, rot_cfg.gross_cap, rot_cfg.gross_floor,
+                rot_cfg.periods_per_year,
+            )
+            w = {s: base_w.get(s, 0.0) * k for s in symbols}
+
+            # 3) slippage on per-name turnover
+            turnover = sum(abs(w[s] - prev_w[s]) for s in symbols)
+            equity *= (1.0 - turnover * self.config.slippage_pct)
+            prev_w = w
             eq_val.append(equity)
             weight_rows.append(dict(prev_w))
 
