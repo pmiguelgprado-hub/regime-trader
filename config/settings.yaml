@@ -97,6 +97,9 @@ risk:
   overnight_gap_budget: 0.02        # overnight 3x-gap loss capped at 2% of equity
   reduce_size_mult: 0.50            # size multiplier when a soft breaker is active
   lock_file: null                   # peak-DD halt lock path (null = disabled; live sets a path)
+  peak_reentry_calm_bars: 0         # bars of calm regime (vol_rank<0.67) before the peak-DD
+                                    #   halt RELEASES (0 = legacy; backtester-only). Tuned on
+                                    #   SPY, validated on held-out ETFs (see docs/superpowers).
 
 # ---------------------------------------------------------------------------
 # backtest — walk-forward allocation backtester
