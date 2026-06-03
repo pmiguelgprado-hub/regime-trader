@@ -55,9 +55,19 @@ class SliceMetrics:
     buy_hold_return: float
     sma200_return: float
     pct_halted: float
+    bh_sharpe: float = 0.0
+    bh_mdd: float = 0.0
 
     def beats_bh(self) -> bool:
         return self.strat_return > self.buy_hold_return
+
+    def beats_bh_risk_adjusted(self) -> bool:
+        """Success criterion: higher Sharpe AND smaller drawdown than buy&hold.
+
+        Drawdowns are negative fractions, so "smaller drawdown" is the larger
+        (less negative) value: ``strat_mdd > bh_mdd``.
+        """
+        return self.strat_sharpe > self.bh_sharpe and self.strat_mdd > self.bh_mdd
 
 
 def slice_metrics(
@@ -107,6 +117,10 @@ def slice_metrics(
     else:
         pct_halted = 0.0
 
+    bh_equity = (1.0 + asset_ret).cumprod()
+    bh_sharpe = an.sharpe_ratio(asset_ret)
+    bh_mdd = an.max_drawdown(bh_equity)
+
     return SliceMetrics(
         label=label,
         n_bars=int(mask.sum()),
@@ -116,6 +130,8 @@ def slice_metrics(
         buy_hold_return=float((1.0 + asset_ret).prod() - 1.0),
         sma200_return=float((1.0 + sma_ret).prod() - 1.0),
         pct_halted=pct_halted,
+        bh_sharpe=bh_sharpe,
+        bh_mdd=bh_mdd,
     )
 
 

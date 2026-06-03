@@ -77,3 +77,21 @@ def test_pct_halted_counts_halted_bars():
     res.regime_history["risk_state"] = ["halted"] * 50 + ["normal"] * 150
     sm = slice_metrics(res, close, "full")
     assert abs(sm.pct_halted - 0.25) < 1e-9
+
+
+def test_slice_reports_buy_hold_sharpe_and_mdd():
+    """Slice exposes bh Sharpe + bh maxDD and a risk-adjusted success predicate."""
+    from backtest.performance import PerformanceAnalyzer
+    res, close = _make_result()
+    sm = slice_metrics(res, close, "mid", "2018-06-01", "2018-12-31", rf=0.045)
+    mask = (res.asset_returns.index >= pd.Timestamp("2018-06-01")) & (
+        res.asset_returns.index <= pd.Timestamp("2018-12-31")
+    )
+    an = PerformanceAnalyzer(risk_free_rate=0.045)
+    bh_ret = res.asset_returns[mask]
+    bh_eq = (1.0 + bh_ret).cumprod()
+    assert abs(sm.bh_sharpe - an.sharpe_ratio(bh_ret)) < 1e-12
+    assert abs(sm.bh_mdd - an.max_drawdown(bh_eq)) < 1e-12
+    assert sm.beats_bh_risk_adjusted() == (
+        sm.strat_sharpe > sm.bh_sharpe and sm.strat_mdd > sm.bh_mdd
+    )
