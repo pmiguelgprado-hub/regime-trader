@@ -199,7 +199,8 @@ class Backtester:
                 # 2) update circuit breakers from realized P&L
                 weekly = self._trailing_return(port_ret_hist + [port_ret], 5)
                 self.risk_manager.update_drawdown_state(
-                    equity=equity, daily_return=port_ret, weekly_return=weekly
+                    equity=equity, daily_return=port_ret, weekly_return=weekly,
+                    calm=self._calm_flag(orch, state.state_id),
                 )
 
                 # 3) target weight for this bar (earned t -> t+1)
@@ -422,6 +423,24 @@ class Backtester:
         choices = [orch._low, orch._mid, orch._high]
         for rid in list(orch.regime_to_strategy):
             orch.regime_to_strategy[rid] = choices[int(rng.integers(0, 3))]
+
+    @staticmethod
+    def _calm_flag(orch: "StrategyOrchestrator", state_id: int) -> bool:
+        """True when the current regime's vol tier is below the high-vol cutoff.
+
+        Drives the risk manager's vol-normalization re-entry: the peak-DD halt
+        releases only after K consecutive *calm* bars. Unknown regimes default to
+        not-calm (conservative — won't trigger re-entry).
+
+        Args:
+            orch: The fold's strategy orchestrator (holds ``vol_rank`` per regime).
+            state_id: Current regime state id.
+
+        Returns:
+            ``True`` if ``vol_rank[state_id] < HIGH_VOL_MIN``.
+        """
+        from core.regime_strategies import HIGH_VOL_MIN
+        return orch.vol_rank.get(state_id, 1.0) < HIGH_VOL_MIN
 
     @staticmethod
     def _flicker_flags(states: list) -> list[bool]:

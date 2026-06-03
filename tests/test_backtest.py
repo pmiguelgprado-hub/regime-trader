@@ -252,3 +252,19 @@ def test_inject_crash_shifts_level(_ohlcv_module) -> None:
     assert crashed["close"].iloc[499] == pytest.approx(before)  # untouched pre-crash
     ratio = crashed["close"].iloc[500] / _ohlcv_module["close"].iloc[500]
     assert ratio == pytest.approx(0.90, abs=1e-9)
+
+
+def test_calm_flag_uses_vol_rank_cutoff():
+    """Backtester._calm_flag: calm iff regime vol_rank < HIGH_VOL_MIN (unknown -> not calm)."""
+    from backtest.backtester import Backtester
+    from core.regime_strategies import HIGH_VOL_MIN
+
+    class _Orch:
+        vol_rank = {0: 0.10, 1: 0.50, 2: 0.90}
+
+    orch = _Orch()
+    assert Backtester._calm_flag(orch, 0) is True            # low vol -> calm
+    assert Backtester._calm_flag(orch, 1) is True            # mid vol (<0.67) -> calm
+    assert Backtester._calm_flag(orch, 2) is False           # high vol (>=0.67) -> not calm
+    assert Backtester._calm_flag(orch, 99) is False          # unknown -> conservative
+    assert HIGH_VOL_MIN == 0.67
