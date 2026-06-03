@@ -115,3 +115,14 @@ def test_halt_floor_default_is_nonzero() -> None:
     rm = RiskManager(RiskConfig())
     rm.state = RiskState.HALTED
     assert rm.target_size_multiplier() > 0.0
+
+
+def test_reentry_config_default_disabled_and_streak_resets() -> None:
+    """Re-entry knob defaults to disabled (legacy); reset clears the calm streak."""
+    cfg = RiskConfig()
+    assert cfg.peak_reentry_calm_bars == 0          # default = legacy/disabled
+    rm = RiskManager(cfg)
+    assert rm._calm_streak == 0
+    rm._calm_streak = 4
+    rm.reset()
+    assert rm._calm_streak == 0

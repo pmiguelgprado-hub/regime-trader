@@ -93,6 +93,12 @@ class RiskConfig:
     reduce_size_mult: float = 0.50
     halt_floor_mult: float = 0.25      # min allocation kept on HALT so equity can recover
                                        #   (avoids the peak-DD permanent-flat trap; backtest sizing)
+    peak_reentry_calm_bars: int = 0    # bars of calm (regime vol_rank < HIGH_VOL_MIN)
+                                       #   before the peak-DD halt RELEASES, instead of
+                                       #   waiting to recover the (monotonic) equity peak
+                                       #   that reduced exposure can't reach. 0 = disabled
+                                       #   (legacy: peak-halt releases only on recovery).
+                                       #   Backtester-only; live keeps the hard halt.
     lock_file: Optional[str] = None
 
 
@@ -364,6 +370,7 @@ class RiskManager:
         self.state: RiskState = RiskState.NORMAL
         self._equity_peak: float = 0.0
         self._daily_trades: int = 0
+        self._calm_streak: int = 0
         self.breaker = CircuitBreaker(config, lock_path=config.lock_file)
 
     # ----------------------------------------------------- sizing (shared) ---
@@ -549,6 +556,7 @@ class RiskManager:
         self.state = RiskState.NORMAL
         self._equity_peak = 0.0
         self._daily_trades = 0
+        self._calm_streak = 0
 
     # ----------------------------------------------- signal validation (live) ---
     def validate_signal(
