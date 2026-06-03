@@ -21,6 +21,7 @@ Daily bars are assumed (``PERIODS_PER_YEAR = 252``) for annualization.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -34,6 +35,91 @@ logger = logging.getLogger(__name__)
 
 PERIODS_PER_YEAR = 252
 CONFIDENCE_BUCKETS = [(0.0, 0.50), (0.50, 0.60), (0.60, 0.70), (0.70, 1.0001)]
+EULER_MASCHERONI = 0.5772156649015329
+
+
+# ----------------------------------------------- deflated Sharpe (Bailey/LdP) ---
+def probabilistic_sharpe_ratio(
+    sr: float, sr_benchmark: float, n_obs: int, skew: float = 0.0, kurt: float = 3.0
+) -> float:
+    """Probability the true Sharpe exceeds ``sr_benchmark`` (Bailey & López de Prado).
+
+    All Sharpe inputs are **per-observation (non-annualized)**. Corrects the
+    Sharpe estimate for sample length and for the non-normality (skew, excess
+    kurtosis) of returns — a high Sharpe on few, fat-tailed bars is less
+    trustworthy than the raw number suggests.
+
+    Args:
+        sr: Observed per-bar Sharpe ratio.
+        sr_benchmark: Benchmark per-bar Sharpe to beat (0 = "better than nothing").
+        n_obs: Number of return observations.
+        skew: Sample skewness of returns.
+        kurt: Sample kurtosis of returns (normal = 3).
+
+    Returns:
+        Probability in ``[0, 1]`` (0.0 if fewer than 2 observations).
+    """
+    from scipy.stats import norm
+
+    if n_obs < 2:
+        return 0.0
+    denom = math.sqrt(max(1e-12, 1.0 - skew * sr + (kurt - 1.0) / 4.0 * sr * sr))
+    stat = (sr - sr_benchmark) * math.sqrt(n_obs - 1) / denom
+    return float(norm.cdf(stat))
+
+
+def expected_max_sharpe(n_trials: int, trials_sr_std: float) -> float:
+    """Expected maximum per-bar Sharpe from ``n_trials`` independent trials.
+
+    The deflation benchmark: under multiple testing, the best of many random
+    strategies has a positive expected Sharpe even with no skill. Subtracting this
+    is what turns a Probabilistic Sharpe into a *Deflated* Sharpe.
+
+    Args:
+        n_trials: Number of configurations tried (the multiple-testing count).
+        trials_sr_std: Std of the per-bar Sharpe estimates across trials.
+
+    Returns:
+        Expected max per-bar Sharpe under the null (0.0 if <2 trials or no spread).
+    """
+    from scipy.stats import norm
+
+    if n_trials < 2 or trials_sr_std <= 0:
+        return 0.0
+    g = EULER_MASCHERONI
+    a = norm.ppf(1.0 - 1.0 / n_trials)
+    b = norm.ppf(1.0 - 1.0 / (n_trials * math.e))
+    return trials_sr_std * ((1.0 - g) * a + g * b)
+
+
+def deflated_sharpe_ratio(
+    sr: float,
+    n_obs: int,
+    skew: float = 0.0,
+    kurt: float = 3.0,
+    n_trials: int = 1,
+    trials_sr_std: float = 0.0,
+) -> float:
+    """Deflated Sharpe Ratio: PSR against the multiple-testing benchmark.
+
+    With ``n_trials == 1`` (frozen knobs, no sweep — the pre-registered case) the
+    benchmark collapses to 0 and this is the Probabilistic Sharpe vs zero. With a
+    sweep, pass ``n_trials`` and the spread of trial Sharpes to deflate harder.
+
+    Args:
+        sr: Observed per-bar Sharpe ratio.
+        n_obs: Number of return observations.
+        skew: Sample skewness of returns.
+        kurt: Sample kurtosis of returns.
+        n_trials: Configurations tried (1 = no multiple testing).
+        trials_sr_std: Std of per-bar Sharpe across trials (only used if n_trials>1).
+
+    Returns:
+        DSR probability in ``[0, 1]``. ``> 0.5`` favours real skill; the gate
+        requires ``> 0`` (i.e. not actively negative evidence).
+    """
+    sr0 = expected_max_sharpe(n_trials, trials_sr_std)
+    return probabilistic_sharpe_ratio(sr, sr0, n_obs, skew, kurt)
 
 
 @dataclass
