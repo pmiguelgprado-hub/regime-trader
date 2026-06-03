@@ -20,14 +20,16 @@ sesión hace esa validación. Herramienta: `backtest/oos_validation.py` +
 Sobre el ciclo completo (2004-2024) y en 6 ETFs, la estrategia **pierde contra
 buy & hold en TODOS**, con Sharpe negativo en 5 de 6. El sweep del halt-floor
 demuestra que el retorno **escala monótonamente con la exposición** (cuanto menos
-des-riesgas, más ganas): la firma exacta de "es exposición, no habilidad de
-régimen". **Dinero real sigue BLOQUEADO** — y ahora con evidencia robusta, no de
-una sola medición.
+des-riesgas, más ganas): **el des-riesgo del halt es net-negativo en exposición**
+(no compra Sharpe, solo recorta retorno). **Dinero real sigue BLOQUEADO** — y ahora
+con evidencia robusta, no de una sola medición.
 
-Matiz importante (test de barajado): el mapa régimen→estrategia **sí lleva algo de
-señal** (bate a un mapa aleatorio), pero su mejor caso (halt desactivado) solo
-**iguala** a buy & hold. La habilidad es real pero pequeña y queda completamente
-anulada por el latch del halt en cualquier ajuste desplegable.
+Matiz (test de barajado, **preliminar**): el mapa régimen→estrategia *podría*
+llevar algo de señal (en una corrida real batió a 3 barajados), pero la muestra es
+pequeña (n=3) y el nivel está contaminado por R-4 (ver abajo); aun en el mejor caso
+(halt desactivado) solo **iguala** a buy & hold. Si hay habilidad es pequeña y queda
+anulada por el latch del halt en cualquier ajuste desplegable. **No tratar como
+establecido** hasta más semillas + redraws (ver Recomendaciones).
 
 ## Método (falsación, no confirmación)
 
@@ -81,8 +83,11 @@ rinde ~2.7 % CAGR (por debajo del 4.5 % sin riesgo → Sharpe negativo) frente a
 (buy & hold = 430.8 % en todo el tramo.)
 
 **Retorno Y Sharpe crecen monótonos con el floor.** Cuanto menos des-riesgas, mejor.
-floor=1.0 (halt = no-op) ≈ buy & hold. **Esta es la firma "pura exposición, sin
-habilidad de régimen".** Dos destructores de valor **distintos**:
+floor=1.0 (halt = no-op) ≈ buy & hold. Ojo al alcance: el sweep **mantiene fijo el
+mapa de asignación real y solo varía el halt**, así que aísla **el coste de
+exposición del halt** — NO dice nada sobre la habilidad del mapa de régimen (eso es
+el test de barajado, §4). Lo que prueba: **el des-riesgo por halt resta retorno sin
+comprar Sharpe.** Dos destructores de valor **distintos**:
 
 - **floor 0.25 → 1.0: 73 % → 420 %.** Todo ese hueco es el **latch del halt por
   drawdown-de-pico.** Es la catástrofe. Incluso con el "fix" de floor 0.25, el bot
@@ -127,12 +132,21 @@ perderse toda la recuperación posterior, que es donde se va el ciclo completo.)
 | barajado seed 2 | 223.9 % | 0.22 |
 | barajado seed 3 | 356.6 % | 0.33 |
 
-**real > los 3 barajados** (mismo proceso → comparación exacta). El mapa
-régimen→estrategia **sí carga información**: la asignación correcta por vol-rank
-bate a la aleatoria (~210 pp, Sharpe 0.45 vs ~0.27). **PERO** incluso el real a
-floor 1.0 solo **iguala** a buy & hold (~430-494 %). Conclusión: hay habilidad
-real pero pequeña, y se la come entera el latch del halt en cualquier floor
-desplegable.
+**real > los 3 barajados** dentro de ese proceso (comparación exacta intra-proceso).
+*Sugiere* que el mapa régimen→estrategia lleva información, **pero el resultado es
+preliminar, no concluyente:**
+
+- **n=3 barajados** (rango 224-357 %, dispersión 133 pp) — muestra pequeña.
+- **real=494.6 % fue la lectura MÁS ALTA de floor 1.0 de toda la sesión.** Las otras
+  corridas floor 1.0 a config idéntica dieron 420.3 / 421.7 / 432.3 / 441.2 % (ver
+  R-4). El proceso del barajado sacó el techo del rango. El margen "~210 pp" mezcla
+  un draw real afortunado con una muestra barajada amplia.
+- La **estabilidad del margen entre procesos no está medida** (lo tengo una vez).
+
+Lo robusto: incluso el mejor real a floor 1.0 solo **iguala** a buy & hold (~430-494 %).
+Si hay habilidad de mapa es pequeña y, en cualquier caso, se la come entera el latch
+del halt en cualquier floor desplegable. Para firmarlo: muchas semillas de barajado
++ 2-3 redraws de real entre procesos, comparando el **margen** (no el nivel).
 
 ## Hallazgo colateral (R-4): no-determinismo entre procesos en horizontes largos
 
@@ -164,8 +178,9 @@ determinista? ¿fijar el mejor modelo por BIC con tolerancia?); pinnear hilos +
 - **Causa dominante: el latch del halt por drawdown-de-pico** (73 %→420 % al
   soltarlo). El fix de floor de la sesión anterior solo lo mitigó y se validó en el
   único periodo donde no mordía.
-- **El overlay de régimen tiene algo de habilidad** (bate al barajado) pero su techo
-  (halt off) solo iguala a bh.
+- **El overlay de régimen *quizá* tenga algo de habilidad** (en una corrida batió al
+  barajado, pero n=3 + contaminado por R-4 → preliminar) y su techo (halt off) solo
+  iguala a bh.
 
 ## Recomendaciones (orden)
 
@@ -173,13 +188,17 @@ determinista? ¿fijar el mejor modelo por BIC con tolerancia?); pinnear hilos +
    overlay SMA, re-entrada) es **tuning**: cualquier número que produzca sobre
    2004-24 sería in-sample. Reservar un holdout (p.ej. 2004-2016 desarrollo /
    2017-2024 validación final) antes de tocar la asignación.
-2. **Arreglar el latch del halt como problema nº1**, no el overlay. El test de
-   barajado pasó (hay señal), así que rediseñar la **re-entrada** está justificado —
-   pero el techo realista es *acercarse* a bh con menos drawdown, no batirlo. Mecánica
+2. **Arreglar el latch del halt como problema nº1**, no el overlay — es la
+   catástrofe medida (73→420 %), independiente de si el mapa tiene skill. Mecánica
    candidata: re-habilitar el halt por enfriamiento/normalización de vol en vez de
    "esperar a recuperar el pico con exposición recortada" (que se auto-bloquea).
    TDD: test del requisito (re-entra tras X días normales / vol < umbral), no de un
-   umbral cómodo.
+   umbral cómodo. **Antes de invertir en rediseñar la re-entrada del overlay**,
+   confirmar que el mapa de régimen lleva señal de verdad: el barajado de §4 es
+   preliminar (n=3, contaminado por R-4) — correr más semillas + redraws de real y
+   medir la estabilidad del **margen**. Si el margen no aguanta, el overlay es peso
+   muerto y no merece tuning; el techo realista en cualquier caso es *acercarse* a
+   bh con menos drawdown, no batirlo.
 3. **Resolver R-4** antes de cualquier claim de precisión o de fiar el modelo en
    vivo (cada `--run-once` puede elegir modelo distinto).
 4. Replantear la tesis honestamente: "des-riesgar por régimen" recorta drawdown pero

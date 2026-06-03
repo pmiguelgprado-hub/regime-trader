@@ -1,0 +1,796 @@
+{
+  "breadth": {
+    "SPY": [
+      {
+        "label": "full",
+        "n_bars": 4330,
+        "strat_return": 0.7331297921363502,
+        "strat_sharpe": -0.1020403939669837,
+        "strat_mdd": -0.21109452538731643,
+        "buy_hold_return": 4.307872149114019,
+        "sma200_return": 3.1990567722356236,
+        "pct_halted": 0.5318706697459584,
+        "beats_bh": false
+      },
+      {
+        "label": "gfc_2008",
+        "n_bars": 429,
+        "strat_return": -0.15713788277931862,
+        "strat_sharpe": -1.5633050318660282,
+        "strat_mdd": -0.21109452538731643,
+        "buy_hold_return": -0.3765178196394374,
+        "sma200_return": -0.12788589992093913,
+        "pct_halted": 0.8508158508158508,
+        "beats_bh": true
+      },
+      {
+        "label": "euro_2011",
+        "n_bars": 127,
+        "strat_return": -0.003742536714954281,
+        "strat_sharpe": -1.2931690619181355,
+        "strat_mdd": -0.03042285740313977,
+        "buy_hold_return": -0.038044336346364394,
+        "sma200_return": -0.14198115412846957,
+        "pct_halted": 1.0,
+        "beats_bh": true
+      },
+      {
+        "label": "china_2015",
+        "n_bars": 145,
+        "strat_return": -0.07861903693083228,
+        "strat_sharpe": -2.6742889969793255,
+        "strat_mdd": -0.09144269771466385,
+        "buy_hold_return": -0.07019360883411863,
+        "sma200_return": -0.07481666860778091,
+        "pct_halted": 0.8689655172413793,
+        "beats_bh": false
+      },
+      {
+        "label": "q4_2018",
+        "n_bars": 63,
+        "strat_return": -0.1085773207651799,
+        "strat_sharpe": -3.232116019042717,
+        "strat_mdd": -0.12091566517808128,
+        "buy_hold_return": -0.1353211735503248,
+        "sma200_return": -0.10033540163919119,
+        "pct_halted": 0.2698412698412698,
+        "beats_bh": true
+      },
+      {
+        "label": "covid_2020",
+        "n_bars": 52,
+        "strat_return": -0.10551174511233874,
+        "strat_sharpe": -3.2871791450458447,
+        "strat_mdd": -0.1435697371338569,
+        "buy_hold_return": -0.134513606272193,
+        "sma200_return": -0.17243721571077608,
+        "pct_halted": 0.7307692307692307,
+        "beats_bh": true
+      },
+      {
+        "label": "bear_2022",
+        "n_bars": 209,
+        "strat_return": -0.044141037722434384,
+        "strat_sharpe": -2.387436479921387,
+        "strat_mdd": -0.057374186757808365,
+        "buy_hold_return": -0.17744311492913378,
+        "sma200_return": -0.1260365155030405,
+        "pct_halted": 1.0,
+        "beats_bh": true
+      }
+    ],
+    "QQQ": [
+      {
+        "label": "full",
+        "n_bars": 4330,
+        "strat_return": 2.0147858123848064,
+        "strat_sharpe": 0.22939818612094334,
+        "strat_mdd": -0.20052656848771366,
+        "buy_hold_return": 10.279243866492589,
+        "sma200_return": 5.588771232319405,
+        "pct_halted": 0.5182448036951501,
+        "beats_bh": false
+      },
+      {
+        "label": "gfc_2008",
+        "n_bars": 429,
+        "strat_return": -0.14621487613331552,
+        "strat_sharpe": -1.4454146858419332,
+        "strat_mdd": -0.20052656848771366,
+        "buy_hold_return": -0.30669842416200976,
+        "sma200_return": -0.17924908555250196,
+        "pct_halted": 0.8554778554778555,
+        "beats_bh": true
+      },
+      {
+        "label": "euro_2011",
+        "n_bars": 127,
+        "strat_return": 0.004198825534969863,
+        "strat_sharpe": -0.7681160533623361,
+        "strat_mdd": -0.02495426105249665,
+        "buy_hold_return": -0.015817429965940155,
+        "sma200_return": -0.11780682848985746,
+        "pct_halted": 1.0,
+        "beats_bh": true
+      },
+      {
+        "label": "china_2015",
+        "n_bars": 145,
+        "strat_return": -0.10137033579993504,
+        "strat_sharpe": -1.5825397465155497,
+        "strat_mdd": -0.12487376101570291,
+        "buy_hold_return": -0.0793816571486915,
+        "sma200_return": -0.0939370463969994,
+        "pct_halted": 0.25517241379310346,
+        "beats_bh": false
+      },
+      {
+        "label": "q4_2018",
+        "n_bars": 63,
+        "strat_return": -0.11765462187456932,
+        "strat_sharpe": -3.6621618740263533,
+        "strat_mdd": -0.12424427860033216,
+        "buy_hold_return": -0.16733222353094124,
+        "sma200_return": -0.1992990190028745,
+        "pct_halted": 0.3968253968253968,
+        "beats_bh": true
+      },
+      {
+        "label": "covid_2020",
+        "n_bars": 52,
+        "strat_return": -0.09326422291401615,
+        "strat_sharpe": -2.574057690893678,
+        "strat_mdd": -0.13324775315800585,
+        "buy_hold_return": -0.065050539621479,
+        "sma200_return": -0.13881633632632273,
+        "pct_halted": 0.6923076923076923,
+        "beats_bh": false
+      },
+      {
+        "label": "bear_2022",
+        "n_bars": 209,
+        "strat_return": -0.1083254067502174,
+        "strat_sharpe": -2.547902218435884,
+        "strat_mdd": -0.12327710568933714,
+        "buy_hold_return": -0.2979021148666362,
+        "sma200_return": -0.16885784986703334,
+        "pct_halted": 0.9282296650717703,
+        "beats_bh": true
+      }
+    ],
+    "IWM": [
+      {
+        "label": "full",
+        "n_bars": 4330,
+        "strat_return": 0.4741480438194148,
+        "strat_sharpe": -0.18829455747391505,
+        "strat_mdd": -0.2403792914308256,
+        "buy_hold_return": 2.41922641025003,
+        "sma200_return": 1.2884038343362207,
+        "pct_halted": 0.6942263279445727,
+        "beats_bh": false
+      },
+      {
+        "label": "gfc_2008",
+        "n_bars": 429,
+        "strat_return": -0.18920842487104983,
+        "strat_sharpe": -1.7687843139122221,
+        "strat_mdd": -0.2403792914308256,
+        "buy_hold_return": -0.3626442654973736,
+        "sma200_return": -0.16367663146888112,
+        "pct_halted": 0.9417249417249417,
+        "beats_bh": true
+      },
+      {
+        "label": "euro_2011",
+        "n_bars": 127,
+        "strat_return": -0.017127116544014664,
+        "strat_sharpe": -1.1933266092040147,
+        "strat_mdd": -0.057906061966572775,
+        "buy_hold_return": -0.09878326623013778,
+        "sma200_return": -0.04036063063549,
+        "pct_halted": 1.0,
+        "beats_bh": true
+      },
+      {
+        "label": "china_2015",
+        "n_bars": 145,
+        "strat_return": -0.08725359540295519,
+        "strat_sharpe": -3.6231259407770913,
+        "strat_mdd": -0.09008676338876764,
+        "buy_hold_return": -0.15849130000210943,
+        "sma200_return": -0.04111904068379191,
+        "pct_halted": 0.896551724137931,
+        "beats_bh": true
+      },
+      {
+        "label": "q4_2018",
+        "n_bars": 63,
+        "strat_return": -0.14037698863379833,
+        "strat_sharpe": -5.416695059370209,
+        "strat_mdd": -0.14279088755892688,
+        "buy_hold_return": -0.20291833343063925,
+        "sma200_return": -0.07113620497300477,
+        "pct_halted": 0.8412698412698413,
+        "beats_bh": true
+      },
+      {
+        "label": "covid_2020",
+        "n_bars": 52,
+        "strat_return": -0.039972623996919254,
+        "strat_sharpe": -2.1197645791657407,
+        "strat_mdd": -0.08192710973735884,
+        "buy_hold_return": -0.2208822582133907,
+        "sma200_return": -0.07980936726112986,
+        "pct_halted": 1.0,
+        "beats_bh": true
+      },
+      {
+        "label": "bear_2022",
+        "n_bars": 209,
+        "strat_return": -0.054604055359642745,
+        "strat_sharpe": -1.654503502358003,
+        "strat_mdd": -0.07993941884170486,
+        "buy_hold_return": -0.16778097627245925,
+        "sma200_return": -0.06899098813528837,
+        "pct_halted": 1.0,
+        "beats_bh": true
+      }
+    ],
+    "EFA": [
+      {
+        "label": "full",
+        "n_bars": 4330,
+        "strat_return": -0.09344550726474576,
+        "strat_sharpe": -0.8898095933634892,
+        "strat_mdd": -0.20680878907202416,
+        "buy_hold_return": 0.5497684522496906,
+        "sma200_return": 0.46268017021487373,
+        "pct_halted": 0.8956120092378753,
+        "beats_bh": false
+      },
+      {
+        "label": "gfc_2008",
+        "n_bars": 429,
+        "strat_return": -0.12459387218975293,
+        "strat_sharpe": -1.2844046672202318,
+        "strat_mdd": -0.20680878907202416,
+        "buy_hold_return": -0.4032181586108782,
+        "sma200_return": -0.13397075231987232,
+        "pct_halted": 0.8508158508158508,
+        "beats_bh": true
+      },
+      {
+        "label": "euro_2011",
+        "n_bars": 127,
+        "strat_return": -0.02243314225290305,
+        "strat_sharpe": -1.5605836169084653,
+        "strat_mdd": -0.03666896195585889,
+        "buy_hold_return": -0.16651890397192337,
+        "sma200_return": -0.06429481782253799,
+        "pct_halted": 1.0,
+        "beats_bh": true
+      },
+      {
+        "label": "china_2015",
+        "n_bars": 145,
+        "strat_return": -0.024082432188280434,
+        "strat_sharpe": -2.291102429548853,
+        "strat_mdd": -0.03441938615036033,
+        "buy_hold_return": -0.16485005490901883,
+        "sma200_return": -0.0299474307747718,
+        "pct_halted": 1.0,
+        "beats_bh": true
+      },
+      {
+        "label": "q4_2018",
+        "n_bars": 63,
+        "strat_return": -0.06575301353583463,
+        "strat_sharpe": -5.188371144124857,
+        "strat_mdd": -0.07087466435599155,
+        "buy_hold_return": -0.12616635771227858,
+        "sma200_return": 0.0,
+        "pct_halted": 0.6190476190476191,
+        "beats_bh": true
+      },
+      {
+        "label": "covid_2020",
+        "n_bars": 52,
+        "strat_return": -0.02533596369488267,
+        "strat_sharpe": -1.9057841574984693,
+        "strat_mdd": -0.0544567154397938,
+        "buy_hold_return": -0.18251430200706165,
+        "sma200_return": -0.05303456813471019,
+        "pct_halted": 1.0,
+        "beats_bh": true
+      },
+      {
+        "label": "bear_2022",
+        "n_bars": 209,
+        "strat_return": -0.07412829967133516,
+        "strat_sharpe": -2.462786253135776,
+        "strat_mdd": -0.09286827510543882,
+        "buy_hold_return": -0.22951040043419735,
+        "sma200_return": -0.010676192077418989,
+        "pct_halted": 1.0,
+        "beats_bh": true
+      }
+    ],
+    "EEM": [
+      {
+        "label": "full",
+        "n_bars": 4330,
+        "strat_return": -0.023234409306059356,
+        "strat_sharpe": -0.5036190643113696,
+        "strat_mdd": -0.2353634993258401,
+        "buy_hold_return": 0.1812720375083221,
+        "sma200_return": -0.09672077720331884,
+        "pct_halted": 0.91270207852194,
+        "beats_bh": false
+      },
+      {
+        "label": "gfc_2008",
+        "n_bars": 429,
+        "strat_return": -0.08315110395044945,
+        "strat_sharpe": -0.6429821622332145,
+        "strat_mdd": -0.2353634993258401,
+        "buy_hold_return": -0.34511748516773144,
+        "sma200_return": -0.12981184162779813,
+        "pct_halted": 0.9673659673659674,
+        "beats_bh": true
+      },
+      {
+        "label": "euro_2011",
+        "n_bars": 127,
+        "strat_return": -0.0428485971305147,
+        "strat_sharpe": -1.3009011117581095,
+        "strat_mdd": -0.07456960557965575,
+        "buy_hold_return": -0.19530135046986508,
+        "sma200_return": -0.07621443784542847,
+        "pct_halted": 1.0,
+        "beats_bh": true
+      },
+      {
+        "label": "china_2015",
+        "n_bars": 145,
+        "strat_return": -0.025242087433205884,
+        "strat_sharpe": -2.287469253444934,
+        "strat_mdd": -0.035252606959741084,
+        "buy_hold_return": -0.17046086061458288,
+        "sma200_return": 0.0,
+        "pct_halted": 1.0,
+        "beats_bh": true
+      },
+      {
+        "label": "q4_2018",
+        "n_bars": 63,
+        "strat_return": -0.008935051217165091,
+        "strat_sharpe": -2.02452518823566,
+        "strat_mdd": -0.01772262945087011,
+        "buy_hold_return": -0.07626380393597187,
+        "sma200_return": 0.0,
+        "pct_halted": 1.0,
+        "beats_bh": true
+      },
+      {
+        "label": "covid_2020",
+        "n_bars": 52,
+        "strat_return": -0.0700881630606951,
+        "strat_sharpe": -3.336073799096687,
+        "strat_mdd": -0.08014459662399898,
+        "buy_hold_return": -0.1710407807999721,
+        "sma200_return": -0.0843728190173757,
+        "pct_halted": 1.0,
+        "beats_bh": true
+      },
+      {
+        "label": "bear_2022",
+        "n_bars": 209,
+        "strat_return": -0.0757960799348878,
+        "strat_sharpe": -2.534536564303281,
+        "strat_mdd": -0.08635807370500193,
+        "buy_hold_return": -0.29415459235414465,
+        "sma200_return": 0.0,
+        "pct_halted": 1.0,
+        "beats_bh": true
+      }
+    ],
+    "TLT": [
+      {
+        "label": "full",
+        "n_bars": 4330,
+        "strat_return": 0.3864970512461776,
+        "strat_sharpe": -0.3181309253391101,
+        "strat_mdd": -0.21213009626366008,
+        "buy_hold_return": 0.6649509699574618,
+        "sma200_return": 0.19675762439393374,
+        "pct_halted": 0.8309468822170901,
+        "beats_bh": false
+      },
+      {
+        "label": "gfc_2008",
+        "n_bars": 429,
+        "strat_return": 0.13032534922951866,
+        "strat_sharpe": 0.2760599839235329,
+        "strat_mdd": -0.15625442758459596,
+        "buy_hold_return": 0.1571701312797833,
+        "sma200_return": 0.13548052554146173,
+        "pct_halted": 0.24475524475524477,
+        "beats_bh": false
+      },
+      {
+        "label": "euro_2011",
+        "n_bars": 127,
+        "strat_return": 0.014652631563113472,
+        "strat_sharpe": -0.12273846232567176,
+        "strat_mdd": -0.049366730630617583,
+        "buy_hold_return": 0.31526883310079734,
+        "sma200_return": 0.31526883310079734,
+        "pct_halted": 0.968503937007874,
+        "beats_bh": false
+      },
+      {
+        "label": "china_2015",
+        "n_bars": 145,
+        "strat_return": 0.011048424950466318,
+        "strat_sharpe": -0.4630646923615555,
+        "strat_mdd": -0.03421576416331251,
+        "buy_hold_return": 0.08480249299799847,
+        "sma200_return": -0.0677356919416896,
+        "pct_halted": 0.9655172413793104,
+        "beats_bh": false
+      },
+      {
+        "label": "q4_2018",
+        "n_bars": 63,
+        "strat_return": 0.0109186058760542,
+        "strat_sharpe": -0.05802394237620989,
+        "strat_mdd": -0.009369821046074644,
+        "buy_hold_return": 0.04587786125526949,
+        "sma200_return": 0.03376542476931821,
+        "pct_halted": 1.0,
+        "beats_bh": false
+      },
+      {
+        "label": "covid_2020",
+        "n_bars": 52,
+        "strat_return": 0.2160184418199158,
+        "strat_sharpe": 2.9510942821429804,
+        "strat_mdd": -0.10078395264343698,
+        "buy_hold_return": 0.15688309775081555,
+        "sma200_return": 0.15688309775081555,
+        "pct_halted": 0.057692307692307696,
+        "beats_bh": true
+      },
+      {
+        "label": "bear_2022",
+        "n_bars": 209,
+        "strat_return": -0.0846937187654847,
+        "strat_sharpe": -3.9950912960327227,
+        "strat_mdd": -0.08772676193152007,
+        "buy_hold_return": -0.3409713903930529,
+        "sma200_return": -0.04495065191950742,
+        "pct_halted": 1.0,
+        "beats_bh": true
+      }
+    ]
+  },
+  "floor_sweep": {
+    "0.0": [
+      {
+        "label": "full",
+        "n_bars": 4330,
+        "strat_return": -0.11301608754264958,
+        "strat_sharpe": -2.7229320060541498,
+        "strat_mdd": -0.11259456996338191,
+        "buy_hold_return": 4.307872149114019,
+        "sma200_return": 3.1990567722356236,
+        "pct_halted": 0.9854503464203234,
+        "beats_bh": false
+      },
+      {
+        "label": "gfc_2008",
+        "n_bars": 429,
+        "strat_return": -0.11301608754264958,
+        "strat_sharpe": -1.8841896207250937,
+        "strat_mdd": -0.11259456996338191,
+        "buy_hold_return": -0.3765178196394374,
+        "sma200_return": -0.12788589992093913,
+        "pct_halted": 0.8531468531468531,
+        "beats_bh": true
+      },
+      {
+        "label": "euro_2011",
+        "n_bars": 127,
+        "strat_return": 0.0,
+        "strat_sharpe": 0.0,
+        "strat_mdd": 0.0,
+        "buy_hold_return": -0.038044336346364394,
+        "sma200_return": -0.14198115412846957,
+        "pct_halted": 1.0,
+        "beats_bh": true
+      },
+      {
+        "label": "china_2015",
+        "n_bars": 145,
+        "strat_return": 0.0,
+        "strat_sharpe": 0.0,
+        "strat_mdd": 0.0,
+        "buy_hold_return": -0.07019360883411863,
+        "sma200_return": -0.07481666860778091,
+        "pct_halted": 1.0,
+        "beats_bh": true
+      },
+      {
+        "label": "q4_2018",
+        "n_bars": 63,
+        "strat_return": 0.0,
+        "strat_sharpe": 0.0,
+        "strat_mdd": 0.0,
+        "buy_hold_return": -0.1353211735503248,
+        "sma200_return": -0.10033540163919119,
+        "pct_halted": 1.0,
+        "beats_bh": true
+      },
+      {
+        "label": "covid_2020",
+        "n_bars": 52,
+        "strat_return": 0.0,
+        "strat_sharpe": 0.0,
+        "strat_mdd": 0.0,
+        "buy_hold_return": -0.134513606272193,
+        "sma200_return": -0.17243721571077608,
+        "pct_halted": 1.0,
+        "beats_bh": true
+      },
+      {
+        "label": "bear_2022",
+        "n_bars": 209,
+        "strat_return": 0.0,
+        "strat_sharpe": 0.0,
+        "strat_mdd": 0.0,
+        "buy_hold_return": -0.17744311492913378,
+        "sma200_return": -0.1260365155030405,
+        "pct_halted": 1.0,
+        "beats_bh": true
+      }
+    ],
+    "0.25": [
+      {
+        "label": "full",
+        "n_bars": 4330,
+        "strat_return": 0.7331297921363502,
+        "strat_sharpe": -0.1020403939669837,
+        "strat_mdd": -0.21109452538731643,
+        "buy_hold_return": 4.307872149114019,
+        "sma200_return": 3.1990567722356236,
+        "pct_halted": 0.5318706697459584,
+        "beats_bh": false
+      },
+      {
+        "label": "gfc_2008",
+        "n_bars": 429,
+        "strat_return": -0.15713788277931862,
+        "strat_sharpe": -1.5633050318660282,
+        "strat_mdd": -0.21109452538731643,
+        "buy_hold_return": -0.3765178196394374,
+        "sma200_return": -0.12788589992093913,
+        "pct_halted": 0.8508158508158508,
+        "beats_bh": true
+      },
+      {
+        "label": "euro_2011",
+        "n_bars": 127,
+        "strat_return": -0.003742536714954281,
+        "strat_sharpe": -1.2931690619181355,
+        "strat_mdd": -0.03042285740313977,
+        "buy_hold_return": -0.038044336346364394,
+        "sma200_return": -0.14198115412846957,
+        "pct_halted": 1.0,
+        "beats_bh": true
+      },
+      {
+        "label": "china_2015",
+        "n_bars": 145,
+        "strat_return": -0.07861903693083228,
+        "strat_sharpe": -2.6742889969793255,
+        "strat_mdd": -0.09144269771466385,
+        "buy_hold_return": -0.07019360883411863,
+        "sma200_return": -0.07481666860778091,
+        "pct_halted": 0.8689655172413793,
+        "beats_bh": false
+      },
+      {
+        "label": "q4_2018",
+        "n_bars": 63,
+        "strat_return": -0.1085773207651799,
+        "strat_sharpe": -3.232116019042717,
+        "strat_mdd": -0.12091566517808128,
+        "buy_hold_return": -0.1353211735503248,
+        "sma200_return": -0.10033540163919119,
+        "pct_halted": 0.2698412698412698,
+        "beats_bh": true
+      },
+      {
+        "label": "covid_2020",
+        "n_bars": 52,
+        "strat_return": -0.10551174511233874,
+        "strat_sharpe": -3.2871791450458447,
+        "strat_mdd": -0.1435697371338569,
+        "buy_hold_return": -0.134513606272193,
+        "sma200_return": -0.17243721571077608,
+        "pct_halted": 0.7307692307692307,
+        "beats_bh": true
+      },
+      {
+        "label": "bear_2022",
+        "n_bars": 209,
+        "strat_return": -0.044141037722434384,
+        "strat_sharpe": -2.387436479921387,
+        "strat_mdd": -0.057374186757808365,
+        "buy_hold_return": -0.17744311492913378,
+        "sma200_return": -0.1260365155030405,
+        "pct_halted": 1.0,
+        "beats_bh": true
+      }
+    ],
+    "0.5": [
+      {
+        "label": "full",
+        "n_bars": 4330,
+        "strat_return": 1.8055892124043802,
+        "strat_sharpe": 0.18449645434134018,
+        "strat_mdd": -0.27314739859357806,
+        "buy_hold_return": 4.307872149114019,
+        "sma200_return": 3.1990567722356236,
+        "pct_halted": 0.3085450346420323,
+        "beats_bh": false
+      },
+      {
+        "label": "gfc_2008",
+        "n_bars": 429,
+        "strat_return": -0.16521849807316402,
+        "strat_sharpe": -0.9899920737093606,
+        "strat_mdd": -0.27314739859357806,
+        "buy_hold_return": -0.3765178196394374,
+        "sma200_return": -0.12788589992093913,
+        "pct_halted": 0.8368298368298368,
+        "beats_bh": true
+      },
+      {
+        "label": "euro_2011",
+        "n_bars": 127,
+        "strat_return": -0.07471200575660075,
+        "strat_sharpe": -1.157402940377705,
+        "strat_mdd": -0.12056769272986767,
+        "buy_hold_return": -0.038044336346364394,
+        "sma200_return": -0.14198115412846957,
+        "pct_halted": 0.6692913385826772,
+        "beats_bh": false
+      },
+      {
+        "label": "china_2015",
+        "n_bars": 145,
+        "strat_return": -0.09218614406886094,
+        "strat_sharpe": -2.2872317034665457,
+        "strat_mdd": -0.10412798354455788,
+        "buy_hold_return": -0.07019360883411863,
+        "sma200_return": -0.07481666860778091,
+        "pct_halted": 0.6482758620689655,
+        "beats_bh": false
+      },
+      {
+        "label": "q4_2018",
+        "n_bars": 63,
+        "strat_return": -0.11553032478276704,
+        "strat_sharpe": -3.3489102373019466,
+        "strat_mdd": -0.13624468380107246,
+        "buy_hold_return": -0.1353211735503248,
+        "sma200_return": -0.10033540163919119,
+        "pct_halted": 0.2698412698412698,
+        "beats_bh": true
+      },
+      {
+        "label": "covid_2020",
+        "n_bars": 52,
+        "strat_return": -0.10155823172312184,
+        "strat_sharpe": -2.2953558546396082,
+        "strat_mdd": -0.1674734302874482,
+        "buy_hold_return": -0.134513606272193,
+        "sma200_return": -0.17243721571077608,
+        "pct_halted": 0.7307692307692307,
+        "beats_bh": true
+      },
+      {
+        "label": "bear_2022",
+        "n_bars": 209,
+        "strat_return": -0.14034150294258452,
+        "strat_sharpe": -1.8993985780452487,
+        "strat_mdd": -0.16370797771072143,
+        "buy_hold_return": -0.17744311492913378,
+        "sma200_return": -0.1260365155030405,
+        "pct_halted": 0.6363636363636364,
+        "beats_bh": true
+      }
+    ],
+    "1.0": [
+      {
+        "label": "full",
+        "n_bars": 4330,
+        "strat_return": 4.203018948876366,
+        "strat_sharpe": 0.3993488162882251,
+        "strat_mdd": -0.4035286421292553,
+        "buy_hold_return": 4.307872149114019,
+        "sma200_return": 3.1990567722356236,
+        "pct_halted": 0.19491916859122402,
+        "beats_bh": false
+      },
+      {
+        "label": "gfc_2008",
+        "n_bars": 429,
+        "strat_return": -0.22744249658052473,
+        "strat_sharpe": -0.6067724254803829,
+        "strat_mdd": -0.4035286421292553,
+        "buy_hold_return": -0.3765178196394374,
+        "sma200_return": -0.12788589992093913,
+        "pct_halted": 0.7575757575757576,
+        "beats_bh": true
+      },
+      {
+        "label": "euro_2011",
+        "n_bars": 127,
+        "strat_return": -0.016499910842428633,
+        "strat_sharpe": -0.2678590569629267,
+        "strat_mdd": -0.12346848201096694,
+        "buy_hold_return": -0.038044336346364394,
+        "sma200_return": -0.14198115412846957,
+        "pct_halted": 0.1889763779527559,
+        "beats_bh": true
+      },
+      {
+        "label": "china_2015",
+        "n_bars": 145,
+        "strat_return": -0.07118743715636722,
+        "strat_sharpe": -1.26037168787434,
+        "strat_mdd": -0.09851175107642196,
+        "buy_hold_return": -0.07019360883411863,
+        "sma200_return": -0.07481666860778091,
+        "pct_halted": 0.25517241379310346,
+        "beats_bh": false
+      },
+      {
+        "label": "q4_2018",
+        "n_bars": 63,
+        "strat_return": -0.12882364797172796,
+        "strat_sharpe": -3.3836360123121256,
+        "strat_mdd": -0.16552760431541869,
+        "buy_hold_return": -0.1353211735503248,
+        "sma200_return": -0.10033540163919119,
+        "pct_halted": 0.2698412698412698,
+        "beats_bh": true
+      },
+      {
+        "label": "covid_2020",
+        "n_bars": 52,
+        "strat_return": -0.09087817231683304,
+        "strat_sharpe": -1.1094352998116128,
+        "strat_mdd": -0.2155640752605711,
+        "buy_hold_return": -0.134513606272193,
+        "sma200_return": -0.17243721571077608,
+        "pct_halted": 0.6346153846153846,
+        "beats_bh": true
+      },
+      {
+        "label": "bear_2022",
+        "n_bars": 209,
+        "strat_return": -0.16302156323117167,
+        "strat_sharpe": -1.4482788907180497,
+        "strat_mdd": -0.20195694795594843,
+        "buy_hold_return": -0.17744311492913378,
+        "sma200_return": -0.1260365155030405,
+        "pct_halted": 0.631578947368421,
+        "beats_bh": true
+      }
+    ]
+  }
+}
