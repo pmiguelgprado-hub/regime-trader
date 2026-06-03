@@ -75,17 +75,20 @@ el path live siguen siendo independientes del régimen.
 
 ### Estado nuevo en RiskManager
 
-- `RiskConfig.peak_reentry_calm_bars: int = 5` (default; tuneado en SPY).
+- `RiskConfig.peak_reentry_calm_bars: int = 0` (**default 0 = DESACTIVADO = legacy**:
+  el peak-halt nunca se libera por calma, solo por recuperación de pico como hoy → no
+  rompe ningún test existente). `settings.yaml` y el harness ponen el valor tuneado
+  (3/5/10). La re-entrada es **opt-in por config**.
 - Contador interno `_calm_streak` (reset en `reset()`).
-- `update_drawdown_state` gana un parámetro `calm: bool = True` (default True = legacy:
-  sin info de régimen se comporta como antes, salida por recuperación de pico — no rompe
-  tests existentes que no pasan el flag).
+- `update_drawdown_state` gana un parámetro `calm: bool = True` (default True). Con
+  `peak_reentry_calm_bars == 0` el flag es inerte (legacy). Solo cuando el config activa
+  K>0 **y** el llamador pasa `calm` reales, la calma sostenida libera el peak-halt.
 
 ## Parámetros a tunear (SOLO en SPY 2004-2024)
 
 Grid pequeño, métrica de selección = **Sharpe en SPY**:
 
-- `peak_reentry_calm_bars` K ∈ {3, 5, 10}
+- `peak_reentry_calm_bars` K ∈ {3, 5, 10} (0 = desactivado, no se tunea — es el legacy)
 - `halt_floor_mult` ∈ {0.0, 0.25}
 - (opcional) definición de calma: `vol_rank < 0.67` vs régimen confirmado no-crash
 
