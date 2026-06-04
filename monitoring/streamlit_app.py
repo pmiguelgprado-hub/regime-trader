@@ -175,15 +175,29 @@ def _risk_status(snap: dict) -> None:
 
 
 def _portfolio(positions: list) -> None:
-    st.subheader("Portfolio")
+    st.subheader("Portfolio — holdings & per-company return")
     if not positions:
         st.info("No open positions.")
         return
-    st.dataframe([{
+
+    def _ret_pct(p) -> float:
+        entry = p.get("avg_entry_price") or 0.0
+        price = p.get("current_price") or 0.0
+        return (price / entry - 1.0) * 100.0 if entry > 0 else 0.0
+
+    rows = [{
         "symbol": p.get("symbol"), "qty": p.get("qty"),
-        "avg_entry": p.get("avg_entry_price"), "price": p.get("current_price"),
-        "market_value": p.get("market_value"), "unrealized_pnl": p.get("unrealized_pl"),
-    } for p in positions], width="stretch", hide_index=True)
+        "avg_entry": round(p.get("avg_entry_price") or 0.0, 2),
+        "price": round(p.get("current_price") or 0.0, 2),
+        "market_value": round(p.get("market_value") or 0.0, 2),
+        "unrealized_pnl": round(p.get("unrealized_pl") or 0.0, 2),
+        "return_%": round(_ret_pct(p), 2),
+    } for p in positions]
+    rows.sort(key=lambda r: r["return_%"], reverse=True)        # winners first
+    total_pnl = sum(r["unrealized_pnl"] for r in rows)
+    st.caption(f"{len(rows)} holdings · total unrealized P&L ${total_pnl:,.2f}. "
+               "Queued book orders appear here once they fill (next market open).")
+    st.dataframe(rows, width="stretch", hide_index=True)
 
 
 def _model_info(snap: dict) -> None:

@@ -47,6 +47,26 @@ def load_sp500(csv_path: Optional[str] = None, for_yfinance: bool = False) -> li
     return list(seen)
 
 
+def load_sector_map(csv_path: Optional[str] = None) -> dict[str, str]:
+    """Map each S&P 500 ticker to its GICS sector (for the sector cap).
+
+    Args:
+        csv_path: Override path to the constituents CSV (defaults to the bundled file).
+
+    Returns:
+        ``{ticker: sector}``; tickers with no sector fall back to ``"UNKNOWN"``.
+    """
+    path = Path(csv_path) if csv_path else _CSV_PATH
+    df = pd.read_csv(path)
+    out: dict[str, str] = {}
+    for _, row in df.iterrows():
+        sym = str(row["Symbol"]).strip()
+        if sym:
+            sec = str(row.get("GICS Sector", "")).strip() or "UNKNOWN"
+            out[sym] = sec
+    return out
+
+
 def load_many(
     symbols: list[str],
     start: Optional[str] = None,

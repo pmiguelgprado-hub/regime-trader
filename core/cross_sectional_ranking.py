@@ -107,6 +107,57 @@ def select_top(ranked: list[str], frac: float = TOP_DECILE) -> list[str]:
     return ranked[:n]
 
 
+def select_top_sector_capped(
+    ranked: list[str],
+    sector_map: dict[str, str],
+    frac: float = TOP_DECILE,
+    max_sector_frac: float = 0.30,
+    max_n: int | None = None,
+) -> list[str]:
+    """Select the top ``frac`` by momentum, capping any single sector's share.
+
+    Walks the momentum ranking best-first and admits a name only while its GICS sector is
+    below the per-sector cap (``ceil(max_sector_frac * target_n)`` names). The hottest
+    sector still gets the **most** slots (up to the cap) — so the book rides growing
+    sectors like semiconductors — but no single sector can dominate the whole book. Names
+    skipped for a full sector are passed over in favour of the next-best momentum name in
+    another sector.
+
+    Args:
+        ranked: Symbols ordered best-momentum first (from :func:`rank_universe`).
+        sector_map: ``{symbol: GICS sector}`` (missing -> ``"UNKNOWN"``).
+        frac: Target fraction of the universe to hold (0.10 = top decile).
+        max_sector_frac: Max share of the *book* any one sector may take (0.30 = 30%).
+        max_n: Hard cap on book size (the downstream ``max_concurrent``). When set, the
+            target and the per-sector cap are computed against ``min(frac*N, max_n)`` so
+            the sector share holds against the *realized* book, not a larger pre-truncation
+            target.
+
+    Returns:
+        Selected symbols (momentum order), sector-capped. May be shorter than the target
+        if too few names clear the cap.
+    """
+    if not ranked:
+        return []
+    import math
+
+    target_n = max(1, math.ceil(len(ranked) * frac))
+    if max_n:
+        target_n = min(target_n, max_n)
+    cap = max(1, math.ceil(max_sector_frac * target_n))
+    counts: dict[str, int] = {}
+    out: list[str] = []
+    for sym in ranked:
+        sec = sector_map.get(sym, "UNKNOWN")
+        if counts.get(sec, 0) >= cap:
+            continue                       # sector full -> skip to next-best other sector
+        out.append(sym)
+        counts[sec] = counts.get(sec, 0) + 1
+        if len(out) >= target_n:
+            break
+    return out
+
+
 def make_book_weights(
     frames: dict[str, pd.DataFrame],
     lookback: int = DEFAULT_LOOKBACK,
@@ -117,6 +168,8 @@ def make_book_weights(
     risk_on_gross: float = 1.0,
     risk_off_gross: float = 0.5,
     use_overlay: bool = True,
+    sector_map: dict[str, str] | None = None,
+    max_sector_frac: float = 0.30,
 ) -> Callable[[pd.Timestamp, float], dict[str, float]]:
     """Build a monthly-rebalanced weight function for the cross-sectional book.
 
@@ -155,7 +208,10 @@ def make_book_weights(
         top = cache.get(key)
         if top is None:
             sliced = {s: df.loc[:ts] for s, df in frames.items()}
-            top = select_top(rank_universe(sliced, lookback, skip), frac)
+            ranked = rank_universe(sliced, lookback, skip)
+            top = (select_top_sector_capped(ranked, sector_map, frac, max_sector_frac,
+                                            max_n=max_concurrent)
+                   if sector_map else select_top(ranked, frac))
             cache[key] = top
         gross = regime_gross_scale(vol_rank, risk_on_gross, risk_off_gross) if use_overlay else 1.0
         return portfolio_target_weights(gross, top, max_single, max_concurrent)
@@ -174,6 +230,8 @@ def compute_book_targets(
     risk_on_gross: float = 1.0,
     risk_off_gross: float = 0.5,
     use_overlay: bool = True,
+    sector_map: dict[str, str] | None = None,
+    max_sector_frac: float = 0.30,
 ) -> dict[str, float]:
     """One-shot target weights for the live/paper rebalance (single decision now).
 
@@ -195,7 +253,10 @@ def compute_book_targets(
     from core.asset_rotation import regime_gross_scale
     from core.portfolio import portfolio_target_weights
 
-    top = select_top(rank_universe(frames, lookback, skip), frac)
+    ranked = rank_universe(frames, lookback, skip)
+    top = (select_top_sector_capped(ranked, sector_map, frac, max_sector_frac,
+                                    max_n=max_concurrent)
+           if sector_map else select_top(ranked, frac))
     gross = regime_gross_scale(vol_rank, risk_on_gross, risk_off_gross) if use_overlay else 1.0
     return portfolio_target_weights(gross, top, max_single, max_concurrent)
 

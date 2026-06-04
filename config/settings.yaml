@@ -48,6 +48,9 @@ cross_sectional:
   max_concurrent: 50                # max names held (≈top decile of ~500)
   risk_on_gross: 1.0                # gross exposure in the low-vol regime
   risk_off_gross: 0.5               # gross exposure in the high-vol regime (de-risked)
+  max_sector_fraction: 0.30         # max share of the book in any one GICS sector
+                                    #   (lets a hot sector lead — e.g. semis — but caps
+                                    #   it; the rest fills with next-best momentum elsewhere)
 
 # ---------------------------------------------------------------------------
 # hmm — Hidden Markov Model regime detection

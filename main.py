@@ -1148,7 +1148,7 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
                                               plan_rebalance_orders, targets_to_orders)
     from core.hmm_engine import HMMEngine
     from core.regime_strategies import StrategyOrchestrator
-    from data.constituents import load_sp500
+    from data.constituents import load_sector_map, load_sp500
     from data.feature_engineering import FeatureEngineer
     from data.market_data import MarketData
     from monitoring.logger import LoggerConfig, setup_logging
@@ -1189,6 +1189,8 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
         max_single=max_single, max_concurrent=max_concurrent,
         risk_on_gross=float(cs.get("risk_on_gross", 1.0)),
         risk_off_gross=float(cs.get("risk_off_gross", 0.5)),
+        sector_map=load_sector_map(),
+        max_sector_frac=float(cs.get("max_sector_fraction", 0.30)),
     )
     prices = {s: float(frames[s]["close"].iloc[-1]) for s in targets if s in frames}
     plan = targets_to_orders(targets, equity, prices)

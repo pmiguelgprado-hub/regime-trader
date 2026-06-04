@@ -20,6 +20,7 @@ from core.cross_sectional_ranking import (
     plan_rebalance_orders,
     rank_universe,
     select_top,
+    select_top_sector_capped,
     targets_to_orders,
 )
 
@@ -88,6 +89,37 @@ def test_select_top_small_universe_keeps_one() -> None:
 
 def test_select_top_empty() -> None:
     assert select_top([], frac=0.1) == []
+
+
+# ---------------------------------------------------- sector cap (vía C) ---
+def test_sector_cap_limits_dominant_sector_keeps_momentum_order() -> None:
+    # 10 names, top decile-ish via frac=0.5 -> target 5; cap 0.40 -> max 2 per sector.
+    ranked = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"]
+    sectors = {s: "TECH" for s in ranked}            # all tech...
+    sectors.update({"C": "HEALTH", "E": "ENERGY", "G": "HEALTH", "I": "ENERGY"})
+    out = select_top_sector_capped(ranked, sectors, frac=0.5, max_sector_frac=0.40)
+    assert len(out) == 5
+    # max 2 from any sector (cap = ceil(0.4*5)=2)
+    from collections import Counter
+    counts = Counter(sectors[s] for s in out)
+    assert all(v <= 2 for v in counts.values())
+    # strongest momentum that clears the cap come first: A,B (tech), C (health), E (energy), G (health)
+    assert out == ["A", "B", "C", "E", "G"]           # D,F (tech) skipped: tech full at 2
+
+
+def test_sector_cap_max_n_binds_cap_to_realized_book() -> None:
+    # 100 names all TECH; frac=0.10 -> 10, but max_n=8 -> target 8, cap=ceil(0.4*8)=4.
+    ranked = [f"S{i:03d}" for i in range(100)]
+    sectors = {s: "TECH" for s in ranked}
+    out = select_top_sector_capped(ranked, sectors, frac=0.10, max_sector_frac=0.40, max_n=8)
+    assert len(out) == 4                                    # cap binds to min(10,8)=8 -> 4
+
+
+def test_sector_cap_unknown_sector_bucketed() -> None:
+    ranked = ["X", "Y", "Z"]
+    out = select_top_sector_capped(ranked, {}, frac=1.0, max_sector_frac=0.34)
+    # all UNKNOWN, cap = ceil(0.34*3)=2 -> only 2 admitted
+    assert out == ["X", "Y"]
 
 
 # ------------------------------------------------------ HMM gross overlay ---
