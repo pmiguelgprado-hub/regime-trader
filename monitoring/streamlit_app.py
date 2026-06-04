@@ -296,10 +296,26 @@ def render(symbol: str, toggles: dict) -> None:
             else st.info("No signals yet.")
 
 
+def _symbol_options() -> list[str]:
+    """Picker options: SPY (regime proxy) + every name in the current book."""
+    book = load_book_snapshot()
+    syms = {"SPY"}
+    for t in book.get("targets", []):
+        if t.get("symbol"):
+            syms.add(str(t["symbol"]))
+    return sorted(syms)
+
+
 # ----------------------------------------------------------------- sidebar ---
 st.sidebar.title("Regime Trader")
 interval = st.sidebar.slider("Refresh interval (s)", 2, 60, 10)
-symbol = st.sidebar.text_input("Primary symbol", value="SPY").strip().upper() or "SPY"
+_opts = _symbol_options()
+symbol = st.sidebar.selectbox(
+    "Stock — price chart", _opts,
+    index=_opts.index("SPY") if "SPY" in _opts else 0,
+    help="Pick any name in the book to see its candlestick chart. SPY = the "
+         "regime proxy. The chart pulls live price from Alpaca.",
+)
 toggles = {
     "cross_book": st.sidebar.checkbox("Show cross-sectional book", value=True),
     "price": st.sidebar.checkbox("Show price chart", value=True),
