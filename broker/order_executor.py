@@ -262,6 +262,33 @@ class OrderExecutor:
                                status=OrderStatus.REJECTED, message=str(exc))
         return self._parse_order(order, trade_id)
 
+    def submit_market_orders(self, orders: list[dict]) -> list["OrderResult"]:
+        """Submit a batch of plain market orders for a cross-sectional book rebalance.
+
+        Each order is ``{symbol, side, qty}`` (see
+        :func:`~core.cross_sectional_ranking.plan_rebalance_orders`, which emits sells
+        before buys). Plain market orders, no bracket/stop — the book's risk is
+        diversification + the HMM gross overlay, not per-name ATR stops. Submission is
+        best-effort: a rejected name is recorded in its ``OrderResult`` and does not abort
+        the batch.
+
+        Args:
+            orders: Ordered list of ``{symbol, side, qty}`` (sells first).
+
+        Returns:
+            One :class:`OrderResult` per non-empty order, in submission order.
+        """
+        results: list[OrderResult] = []
+        for o in orders:
+            qty = int(o.get("qty", 0))
+            if qty <= 0:
+                continue
+            results.append(self.submit_order(
+                o["symbol"], qty, o["side"], OrderType.MARKET,
+                trade_id=self._new_trade_id(),
+            ))
+        return results
+
     def cancel_order(self, order_id: str) -> OrderResult:
         """Cancel an open order.
 

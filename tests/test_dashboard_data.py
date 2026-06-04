@@ -12,6 +12,7 @@ import json
 import pandas as pd
 
 from monitoring.dashboard_data import (
+    load_book_snapshot,
     load_equity_curve,
     load_regime_history,
     load_snapshot,
@@ -31,6 +32,22 @@ def test_load_snapshot_parses_state(tmp_path) -> None:
     snap = load_snapshot(str(p))
     assert snap["last_regime"] == "bull"
     assert snap["recent_signals"][0]["symbol"] == "SPY"
+
+
+def test_load_book_snapshot_missing_returns_empty(tmp_path) -> None:
+    assert load_book_snapshot(str(tmp_path / "nope.json")) == {}
+
+
+def test_load_book_snapshot_parses_book(tmp_path) -> None:
+    p = tmp_path / "book_snapshot.json"
+    p.write_text(json.dumps({
+        "vol_rank": 0.0, "gross": 0.98, "dry_run": True, "mode": "PAPER",
+        "targets": [{"symbol": "AVGO", "shares": 4, "price": 479.23, "weight": 0.02}],
+        "executed": [],
+    }))
+    book = load_book_snapshot(str(p))
+    assert book["gross"] == 0.98 and book["dry_run"] is True
+    assert book["targets"][0]["symbol"] == "AVGO"
 
 
 def test_risk_panel_defaults_when_empty() -> None:

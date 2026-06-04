@@ -44,6 +44,7 @@ logs/
 data/cache/
 # runtime state written by the live loop / peak-DD circuit-breaker lock
 state_snapshot.json
+book_snapshot.json
 trading_halted.lock
 backtest_results/
 backtest_output/

@@ -15,6 +15,7 @@ from typing import Any, Optional
 import pandas as pd
 
 DEFAULT_SNAPSHOT = "state_snapshot.json"
+DEFAULT_BOOK_SNAPSHOT = "book_snapshot.json"
 DEFAULT_BASE = "backtest_output"
 
 
@@ -26,6 +27,25 @@ def load_snapshot(path: str = DEFAULT_SNAPSHOT) -> dict[str, Any]:
 
     Returns:
         Parsed snapshot dict, or ``{}`` if absent/unreadable.
+    """
+    p = Path(path)
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def load_book_snapshot(path: str = DEFAULT_BOOK_SNAPSHOT) -> dict[str, Any]:
+    """Load the cross-sectional book snapshot written by ``main.run_rebalance``.
+
+    Args:
+        path: Book snapshot JSON path.
+
+    Returns:
+        Parsed dict (vol_rank, gross, targets, held, executed, ...), or ``{}`` if
+        absent/unreadable (the dashboard then shows a placeholder).
     """
     p = Path(path)
     if not p.exists():

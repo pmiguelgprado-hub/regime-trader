@@ -42,6 +42,7 @@ from monitoring.dashboard_data import (
     live_account,
     live_positions,
     live_price,
+    load_book_snapshot,
     load_regime_history,
     load_snapshot,
 )
@@ -200,6 +201,38 @@ def _model_info(snap: dict) -> None:
                f"· trained {mi.get('training_date', '—')}")
 
 
+def _cross_sectional_book(book: dict) -> None:
+    """Cross-sectional book panel (vía C): regime overlay + target holdings.
+
+    Reads the snapshot written by ``main.run_rebalance``. The ranker (momentum) picks the
+    names; the HMM ``vol_rank`` scales gross exposure. ``dry_run`` plans are shown the same
+    way — the badge says whether orders were submitted.
+    """
+    st.subheader("Cross-Sectional Book (vía C)")
+    if not book:
+        st.info("No book snapshot yet. Run `python main.py --rebalance` to generate one.")
+        return
+    a, b, c, d = st.columns(4)
+    a.metric("Vol rank (regime)", f"{book.get('vol_rank', 0.0):.2f}",
+             help="0 = low-vol/risk-on (full gross), 1 = high-vol/risk-off (de-risked)")
+    b.metric("Gross exposure", f"{book.get('gross', 0.0) * 100:.0f}%")
+    c.metric("Names", len(book.get("targets", [])))
+    d.metric("Equity", f"${book.get('equity', 0.0):,.0f}")
+    executed = book.get("executed") or []
+    if book.get("dry_run", True):
+        st.warning(f"DRY-RUN plan ({book.get('mode', '—')}) — no orders submitted")
+    else:
+        st.success(f"EXECUTED ({book.get('mode', '—')}) — {len(executed)} orders submitted")
+    targets = book.get("targets") or []
+    if targets:
+        st.caption(f"Target book ({book.get('timestamp', '—')}):")
+        st.dataframe([{
+            "symbol": t.get("symbol"), "shares": t.get("shares"),
+            "price": t.get("price"), "weight": t.get("weight"),
+            "notional": t.get("notional"),
+        } for t in targets], width="stretch", hide_index=True)
+
+
 def render(symbol: str, toggles: dict) -> None:
     """Draw the whole dashboard from live + snapshot state (re-run on refresh)."""
     snap = load_snapshot()
@@ -220,6 +253,10 @@ def render(symbol: str, toggles: dict) -> None:
     if snap.get("regime_table"):
         st.dataframe(snap["regime_table"], width="stretch", hide_index=True)
     _portfolio(positions)
+
+    if toggles.get("cross_book"):
+        st.divider()
+        _cross_sectional_book(load_book_snapshot())
 
     if toggles.get("price"):
         st.subheader(f"{symbol} Price")
@@ -250,6 +287,7 @@ st.sidebar.title("Regime Trader")
 interval = st.sidebar.slider("Refresh interval (s)", 2, 60, 10)
 symbol = st.sidebar.text_input("Primary symbol", value="SPY").strip().upper() or "SPY"
 toggles = {
+    "cross_book": st.sidebar.checkbox("Show cross-sectional book", value=True),
     "price": st.sidebar.checkbox("Show price chart", value=True),
     "regime_history": st.sidebar.checkbox("Show regime history", value=True),
     "transition": st.sidebar.checkbox("Show transition matrix", value=False),

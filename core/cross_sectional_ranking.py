@@ -236,3 +236,34 @@ def targets_to_orders(
                      "price": price, "shares": shares})
     plan.sort(key=lambda o: -o["notional"])
     return plan
+
+
+def plan_rebalance_orders(
+    target_shares: dict[str, int],
+    held_shares: dict[str, int],
+) -> list[dict]:
+    """Diff target vs held positions into a rebalance order list (pure).
+
+    For each name, trade the share delta: buy to increase, sell to reduce. Names held
+    but **not** in the target (dropped from the book, or never part of it) get a full
+    liquidating sell (target 0). **Sells are emitted before buys** so the freed cash
+    covers the buys — 49 buys at ~98% gross would otherwise exhaust buying power before
+    the sells settle and the broker would reject the tail.
+
+    Args:
+        target_shares: ``{symbol: desired_shares}`` (from the book plan).
+        held_shares: ``{symbol: currently_held_shares}`` (from the broker).
+
+    Returns:
+        Ordered ``[{symbol, side, qty}, ...]`` — all sells first, then buys; names with
+        zero delta are omitted.
+    """
+    sells: list[dict] = []
+    buys: list[dict] = []
+    for sym in sorted(set(target_shares) | set(held_shares)):
+        delta = int(target_shares.get(sym, 0)) - int(held_shares.get(sym, 0))
+        if delta < 0:
+            sells.append({"symbol": sym, "side": "sell", "qty": -delta})
+        elif delta > 0:
+            buys.append({"symbol": sym, "side": "buy", "qty": delta})
+    return sells + buys

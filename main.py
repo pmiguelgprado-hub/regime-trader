@@ -33,6 +33,7 @@ import pandas as pd
 import yaml
 
 STATE_SNAPSHOT = "state_snapshot.json"
+BOOK_SNAPSHOT = "book_snapshot.json"
 MODEL_DIR = "models"
 HMM_MAX_AGE_DAYS = 7
 
@@ -1111,7 +1112,8 @@ def run_once(config: dict[str, Any], credentials: dict[str, str],
 
 
 def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
-                  dry_run: bool = True) -> list[dict]:  # pragma: no cover - live broker/market
+                  dry_run: bool = True,
+                  universe_limit: Optional[int] = None) -> list[dict]:  # pragma: no cover - live broker/market
     """Compute (and, when un-gated, submit) the cross-sectional book rebalance (vía C).
 
     The monthly paper entry point for the cross-sectional return-predictor book: load
@@ -1121,22 +1123,29 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
     equity, and report the order plan. Schedule monthly (see
     ``deploy/com.regimetrader.rebalance.plist``); do NOT drive off the daily/minute cadence.
 
-    Honesty + safety: ``dry_run=True`` (default) computes and logs the plan but submits
-    nothing. Live multi-name submission is **gated** — it needs a supervised paper
-    verification (the project's S-1 discipline) and the pre-registered gate
-    (docs/analysis/2026-06-04-cross-sectional-prereg.md) to pass first. Real money BLOCKED.
+    Safety: ``dry_run=True`` (default) computes, logs, and snapshots the plan but submits
+    nothing. ``dry_run=False`` diffs the plan against current holdings and submits market
+    orders (sells before buys). The book trades the **paper** account; real money stays
+    BLOCKED until the pre-registered gate passes
+    (docs/analysis/2026-06-04-cross-sectional-prereg.md). NOTE: the diff liquidates any
+    holding not in the book's target — if the daily ``--run-once`` SPY bot shares this
+    account, retire/flatten it first (SPY is not an S&P 500 constituent, so the book would
+    sell it and the two strategies would collide). Either way the snapshot is written for
+    the dashboard.
 
     Args:
         config: Parsed settings (reads the ``cross_sectional`` block).
         credentials: Broker credentials.
-        dry_run: If True (default), compute + log the plan only.
+        dry_run: If True (default), compute + log + snapshot only (no orders).
+        universe_limit: Optional cap on the universe size (small-N safe testing).
 
     Returns:
         The order plan: ``[{symbol, weight, notional, price, shares}, ...]``.
     """
     from broker.alpaca_client import AlpacaClient, AlpacaConfig
+    from broker.order_executor import OrderExecutor
     from core.cross_sectional_ranking import (compute_book_targets,
-                                              targets_to_orders)
+                                              plan_rebalance_orders, targets_to_orders)
     from core.hmm_engine import HMMEngine
     from core.regime_strategies import StrategyOrchestrator
     from data.constituents import load_sp500
@@ -1171,6 +1180,8 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
 
     # Universe history -> cross-sectional rank -> top-decile targets -> share plan.
     universe = load_sp500()
+    if universe_limit:                                  # safe-test override (small universe)
+        universe = universe[:universe_limit]
     frames = md.get_history_multi(universe, config.get("broker", {}).get("timeframe", "1Day"),
                                   lookback + skip + 10)
     targets = compute_book_targets(
@@ -1189,14 +1200,36 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
         tlog.log(tlog.main, "rebalance_target",
                  f"{o['symbol']}: {o['shares']}sh @ {o['price']:.2f} (w={o['weight']:.3f})")
 
+    # Current holdings (for the dashboard + the rebalance diff).
+    held = {p["symbol"]: int(float(p["qty"])) for p in client.get_positions()}
+
+    executed: list[dict] = []
     if not dry_run:
-        raise NotImplementedError(
-            "Live submission of the cross-sectional book is gated: it requires the "
-            "OrderExecutor multi-name path plus a supervised paper verification (S-1 "
-            "discipline) and the pre-registered gate "
-            "(docs/analysis/2026-06-04-cross-sectional-prereg.md) to pass first. "
-            "Run with dry_run=True to inspect the plan."
-        )
+        # Diff target vs held -> sells before buys; plain market orders (cash book,
+        # risk = diversification + gross overlay, no per-name stops).
+        target_shares = {o["symbol"]: int(o["shares"]) for o in plan}
+        orders = plan_rebalance_orders(target_shares, held)
+        results = OrderExecutor(client).submit_market_orders(orders)
+        executed = [{"symbol": r.symbol, "status": r.status.value,
+                     "filled_qty": r.filled_qty} for r in results]
+        tlog.log(tlog.main, "rebalance_executed", f"{len(executed)} orders submitted",
+                 mode="PAPER" if paper else "LIVE")
+
+    # Persist the book snapshot for the dashboard (dry-run writes it too).
+    snapshot = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "mode": "PAPER" if paper else "LIVE",
+        "dry_run": dry_run,
+        "vol_rank": vol_rank,
+        "gross": round(sum(o["weight"] for o in plan), 4),
+        "equity": equity,
+        "universe_size": len(frames),
+        "targets": plan,
+        "held": [{"symbol": s, "shares": q} for s, q in sorted(held.items())],
+        "executed": executed,
+    }
+    Path(BOOK_SNAPSHOT).write_text(json.dumps(snapshot, indent=2, default=str))
+    tlog.log(tlog.main, "book_snapshot", f"wrote {BOOK_SNAPSHOT}")
     return plan
 
 
@@ -1327,9 +1360,14 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     mode.add_argument("--run-once", action="store_true", dest="run_once",
                       help="one daily decision cycle then exit (schedule this for daily)")
     mode.add_argument("--rebalance", action="store_true",
-                      help="compute the cross-sectional book rebalance plan (dry-run; "
-                           "schedule monthly). Live submission is gated.")
+                      help="cross-sectional book rebalance (dry-run by default; "
+                           "schedule monthly). Add --execute to submit paper orders.")
     mode.add_argument("--live", action="store_true", help="paper/live trading loop (default)")
+
+    parser.add_argument("--execute", action="store_true",
+                        help="with --rebalance: actually submit the paper orders (default dry-run)")
+    parser.add_argument("--limit", type=int, default=None,
+                        help="with --rebalance: cap universe size (small-N safe testing)")
 
     parser.add_argument("--compare", action="store_true", help="add benchmark comparison (backtest)")
     parser.add_argument("--symbols", nargs="+", default=None,
@@ -1362,7 +1400,8 @@ def main(argv: Optional[list[str]] = None) -> None:
     elif args.run_once:
         run_once(config, load_credentials())
     elif args.rebalance:
-        run_rebalance(config, load_credentials(), dry_run=True)
+        run_rebalance(config, load_credentials(), dry_run=not args.execute,
+                      universe_limit=args.limit)
     else:  # default: live
         run_live(config, load_credentials())
 

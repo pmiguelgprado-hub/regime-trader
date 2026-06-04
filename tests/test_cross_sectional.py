@@ -17,6 +17,7 @@ from core.cross_sectional_ranking import (
     compute_book_targets,
     make_book_weights,
     momentum_score,
+    plan_rebalance_orders,
     rank_universe,
     select_top,
     targets_to_orders,
@@ -186,3 +187,51 @@ def test_targets_to_orders_whole_shares_skips_unpriced() -> None:
     assert by_sym["AAA"]["shares"] == 250                # 50k / 200
     assert by_sym["BBB"]["shares"] == 500                # 50k / 100
     assert plan[0]["symbol"] in {"AAA", "BBB"}           # sorted by notional desc
+
+
+# ------------------------------------------------- rebalance diff (vía C) ---
+def test_plan_rebalance_orders_sells_before_buys_and_liquidates_dropped() -> None:
+    targets = {"KEEP": 100, "GROW": 50, "NEW": 30}        # NEW not held; KEEP up; GROW down
+    held = {"KEEP": 60, "GROW": 80, "DROP": 25}           # DROP not in target -> liquidate
+    orders = plan_rebalance_orders(targets, held)
+    sides = [o["side"] for o in orders]
+    assert sides == sorted(sides, key=lambda s: 0 if s == "sell" else 1)  # all sells first
+    by = {o["symbol"]: o for o in orders}
+    assert by["DROP"] == {"symbol": "DROP", "side": "sell", "qty": 25}     # full liquidation
+    assert by["GROW"] == {"symbol": "GROW", "side": "sell", "qty": 30}     # 80 -> 50
+    assert by["KEEP"] == {"symbol": "KEEP", "side": "buy", "qty": 40}      # 60 -> 100
+    assert by["NEW"] == {"symbol": "NEW", "side": "buy", "qty": 30}        # 0 -> 30
+
+
+def test_plan_rebalance_orders_skips_zero_delta() -> None:
+    orders = plan_rebalance_orders({"A": 10, "B": 5}, {"A": 10, "B": 3})
+    assert orders == [{"symbol": "B", "side": "buy", "qty": 2}]            # A unchanged
+
+
+def test_submit_market_orders_batch() -> None:
+    """The executor batch submits each order as a plain market order."""
+    from types import SimpleNamespace
+
+    from broker.alpaca_client import AlpacaClient, AlpacaConfig
+    from broker.order_executor import OrderExecutor, OrderStatus
+
+    class _Trading:
+        def __init__(self):
+            self.submitted = []
+
+        def submit_order(self, order_data):
+            self.submitted.append(order_data)
+            return SimpleNamespace(id=f"o{len(self.submitted)}", symbol=order_data.symbol,
+                                   status="filled", filled_qty=order_data.qty,
+                                   filled_avg_price=100.0, client_order_id=None, legs=None)
+
+    client = AlpacaClient(AlpacaConfig("k", "s", paper=True))
+    client._trading_client = _Trading()
+    ex = OrderExecutor(client, fill_timeout_sec=0.0, poll_interval_sec=0.0)
+    orders = [{"symbol": "DROP", "side": "sell", "qty": 25},
+              {"symbol": "NEW", "side": "buy", "qty": 30},
+              {"symbol": "ZERO", "side": "buy", "qty": 0}]          # skipped
+    results = ex.submit_market_orders(orders)
+    assert len(results) == 2                                        # ZERO skipped
+    assert all(r.status is OrderStatus.FILLED for r in results)
+    assert [o.symbol for o in client.trading.submitted] == ["DROP", "NEW"]  # order preserved
