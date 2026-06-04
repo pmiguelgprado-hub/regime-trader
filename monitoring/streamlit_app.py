@@ -23,7 +23,17 @@ is the view and is never imported by the test suite.
 
 from __future__ import annotations
 
+import sys
 from datetime import datetime
+from pathlib import Path
+
+# `streamlit run monitoring/streamlit_app.py` puts the script's own dir on
+# sys.path, not the project root, so the absolute `monitoring.*` package import
+# below fails. Put the project root (this file's parent's parent) on the path so
+# the documented launch command works from any cwd.
+_ROOT = str(Path(__file__).resolve().parent.parent)
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 
 import plotly.graph_objects as go
 import streamlit as st
@@ -88,7 +98,7 @@ def _candles(symbol: str, df) -> None:
                       margin=dict(l=10, r=10, t=10, b=10),
                       xaxis_rangeslider_visible=False,
                       paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def _transition_heatmap(tm: dict) -> None:
@@ -105,7 +115,7 @@ def _transition_heatmap(tm: dict) -> None:
                       margin=dict(l=10, r=10, t=10, b=10),
                       paper_bgcolor="rgba(0,0,0,0)",
                       yaxis={"title": "from"}, xaxis={"title": "to"})
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def _metrics(acct: dict | None, snap: dict) -> None:
@@ -138,7 +148,7 @@ def _regime_detection(snap: dict) -> None:
     elif reg:
         st.warning("… stabilizing")
     if reg:
-        st.plotly_chart(_confidence_gauge(conf, str(name)), use_container_width=True)
+        st.plotly_chart(_confidence_gauge(conf, str(name)), width="stretch")
         runners = reg.get("runner_ups") or {}
         others = [f"{k.upper()}: {v:.2e}" for k, v in list(runners.items())[1:5]]
         if others:
@@ -172,7 +182,7 @@ def _portfolio(positions: list) -> None:
         "symbol": p.get("symbol"), "qty": p.get("qty"),
         "avg_entry": p.get("avg_entry_price"), "price": p.get("current_price"),
         "market_value": p.get("market_value"), "unrealized_pnl": p.get("unrealized_pl"),
-    } for p in positions], use_container_width=True, hide_index=True)
+    } for p in positions], width="stretch", hide_index=True)
 
 
 def _model_info(snap: dict) -> None:
@@ -196,6 +206,9 @@ def render(symbol: str, toggles: dict) -> None:
     acct = live_account()
     positions = live_positions()
 
+    # Refresh heartbeat. Lives in the main fragment, not the sidebar: Streamlit
+    # forbids a fragment (run_every) from writing to the sidebar.
+    st.caption(f"Last refresh: {datetime.now():%H:%M:%S}")
     _metrics(acct, snap)
     st.divider()
     left, right = st.columns([2, 1])
@@ -205,7 +218,7 @@ def render(symbol: str, toggles: dict) -> None:
         _risk_status(snap)
     st.divider()
     if snap.get("regime_table"):
-        st.dataframe(snap["regime_table"], use_container_width=True, hide_index=True)
+        st.dataframe(snap["regime_table"], width="stretch", hide_index=True)
     _portfolio(positions)
 
     if toggles.get("price"):
@@ -228,7 +241,7 @@ def render(symbol: str, toggles: dict) -> None:
     if toggles.get("logs"):
         st.subheader("Signal feed / logs")
         sigs = snap.get("recent_signals") or []
-        st.dataframe(sigs, use_container_width=True, hide_index=True) if sigs \
+        st.dataframe(sigs, width="stretch", hide_index=True) if sigs \
             else st.info("No signals yet.")
 
 
@@ -252,14 +265,4 @@ def _live():
     render(symbol, toggles)
 
 
-@st.fragment(run_every=interval)
-def _refresh_caption():
-    # A fragment that writes to the sidebar must itself be invoked inside a
-    # `with st.sidebar:` block (Streamlit forbids targeting the sidebar from a
-    # fragment otherwise).
-    st.caption(f"Last refresh: {datetime.now():%H:%M:%S}")
-
-
 _live()
-with st.sidebar:
-    _refresh_caption()
