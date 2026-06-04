@@ -240,6 +240,29 @@ def test_plan_rebalance_orders_skips_zero_delta() -> None:
     assert orders == [{"symbol": "B", "side": "buy", "qty": 2}]            # A unchanged
 
 
+def test_drop_open_order_symbols_filters_pending() -> None:
+    from core.cross_sectional_ranking import drop_open_order_symbols
+    orders = [{"symbol": "AAPL", "side": "buy", "qty": 5},
+              {"symbol": "MSFT", "side": "sell", "qty": 3},
+              {"symbol": "NVDA", "side": "buy", "qty": 2}]
+    # MSFT has a pending order from a prior run -> must not be re-submitted (any side)
+    kept = drop_open_order_symbols(orders, {"MSFT"})
+    assert [o["symbol"] for o in kept] == ["AAPL", "NVDA"]
+
+
+def test_drop_open_order_symbols_no_open_returns_all() -> None:
+    from core.cross_sectional_ranking import drop_open_order_symbols
+    orders = [{"symbol": "AAPL", "side": "buy", "qty": 5}]
+    assert drop_open_order_symbols(orders, set()) == orders
+
+
+def test_drop_open_order_symbols_all_pending_returns_empty() -> None:
+    from core.cross_sectional_ranking import drop_open_order_symbols
+    orders = [{"symbol": "AAPL", "side": "buy", "qty": 5},
+              {"symbol": "MSFT", "side": "sell", "qty": 3}]
+    assert drop_open_order_symbols(orders, {"AAPL", "MSFT"}) == []
+
+
 def test_submit_market_orders_batch() -> None:
     """The executor batch submits each order as a plain market order."""
     from types import SimpleNamespace

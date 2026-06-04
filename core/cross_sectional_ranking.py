@@ -328,3 +328,22 @@ def plan_rebalance_orders(
         elif delta > 0:
             buys.append({"symbol": sym, "side": "buy", "qty": delta})
     return sells + buys
+
+
+def drop_open_order_symbols(orders: list[dict], open_symbols: set[str]) -> list[dict]:
+    """Drop any planned order whose symbol already has an open (unfilled) order.
+
+    The idempotency guard for the monthly execute path. The rebalance diff is computed
+    from *held* positions; a still-pending order from a prior run is not yet a position,
+    so the diff would re-issue it and **double-submit**. Skipping every symbol with a live
+    order (regardless of side) makes a re-run within the fill gap a no-op for those names —
+    they settle on the next run once filled. Required before un-gating monthly auto-execute.
+
+    Args:
+        orders: Planned orders from :func:`plan_rebalance_orders`.
+        open_symbols: Symbols that currently have an open order on the account.
+
+    Returns:
+        The orders whose symbol has no pending order (input order preserved).
+    """
+    return [o for o in orders if o["symbol"] not in open_symbols]

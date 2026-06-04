@@ -3,12 +3,14 @@
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
   regime-trader cross-sectional book monthly rebalance (launchd LaunchAgent).
-  Runs `main.py --rebalance` on the 1st of each month, ~22:30 CEST (after the US
-  close). v1 is DRY-RUN: it computes and logs the target book + order plan but
-  submits nothing. Live submission is gated (see run_rebalance + the pre-registered
-  gate doc). Real money BLOCKED.
+  Runs `main.py --rebalance --execute` on the 1st of each month, ~22:30 CEST (after
+  the US close). It submits the PAPER rebalance so the forward track record measures
+  the pre-registered monthly-rebalanced book (a dry-run scheduler would instead
+  measure buy-and-hold of the first decile). The open-order guard
+  (drop_open_order_symbols) makes a same-window re-run a no-op. PAPER account only;
+  real money remains BLOCKED until the frozen gate passes.
 
-  Install (when ready to accumulate the dry-run plan log):
+  Install:
     cp deploy/com.regimetrader.rebalance.plist ~/Library/LaunchAgents/
     launchctl load ~/Library/LaunchAgents/com.regimetrader.rebalance.plist
   Stop:
@@ -29,6 +31,7 @@
     <string>/Users/pablomiguelgonzalezprado/AIOS/projects/regime-trader/.venv/bin/python</string>
     <string>main.py</string>
     <string>--rebalance</string>
+    <string>--execute</string>
   </array>
 
   <key>WorkingDirectory</key>

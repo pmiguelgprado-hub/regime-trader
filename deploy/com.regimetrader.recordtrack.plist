@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  regime-trader daily track-record recorder (launchd LaunchAgent).
+  Runs `main.py --record-track` every day at 23:00 CEST (after the US close at
+  ~22:00 and after the monthly rebalance fills). Appends one row — book equity plus
+  EW-S&P500 and SPY chained NAV levels — to track_record.csv, the daily series the
+  frozen forward gate evaluates (Sharpe / maxDD / DSR over >=12 months vs both
+  benchmarks). Submits NO orders, touches no signal: pure measurement plumbing.
+  Idempotent per close-bar date, so weekend/holiday runs are harmless no-ops.
+
+  Install:
+    cp deploy/com.regimetrader.recordtrack.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.regimetrader.recordtrack.plist
+  Stop:
+    launchctl unload ~/Library/LaunchAgents/com.regimetrader.recordtrack.plist
+  Run now (test):
+    launchctl start com.regimetrader.recordtrack
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.regimetrader.recordtrack</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/pablomiguelgonzalezprado/AIOS/projects/regime-trader/.venv/bin/python</string>
+    <string>main.py</string>
+    <string>--record-track</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/pablomiguelgonzalezprado/AIOS/projects/regime-trader</string>
+
+  <!-- Every day at 23:00 local time (after US close + after rebalance fills). -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>23</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/pablomiguelgonzalezprado/AIOS/projects/regime-trader/logs/recordtrack.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/pablomiguelgonzalezprado/AIOS/projects/regime-trader/logs/recordtrack.err.log</string>
+</dict>
+</plist>

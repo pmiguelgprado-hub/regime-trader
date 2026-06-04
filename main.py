@@ -34,6 +34,7 @@ import yaml
 
 STATE_SNAPSHOT = "state_snapshot.json"
 BOOK_SNAPSHOT = "book_snapshot.json"
+TRACK_RECORD_CSV = "track_record.csv"
 MODEL_DIR = "models"
 HMM_MAX_AGE_DAYS = 7
 
@@ -1145,6 +1146,7 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
     from broker.alpaca_client import AlpacaClient, AlpacaConfig
     from broker.order_executor import OrderExecutor
     from core.cross_sectional_ranking import (compute_book_targets,
+                                              drop_open_order_symbols,
                                               plan_rebalance_orders, targets_to_orders)
     from core.hmm_engine import HMMEngine
     from core.regime_strategies import StrategyOrchestrator
@@ -1211,6 +1213,15 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
         # risk = diversification + gross overlay, no per-name stops).
         target_shares = {o["symbol"]: int(o["shares"]) for o in plan}
         orders = plan_rebalance_orders(target_shares, held)
+        # Idempotency guard: never re-submit a name that already has a pending order
+        # (a re-run in the fill gap would double-submit; held doesn't yet reflect it).
+        open_syms = {o["symbol"] for o in client.get_orders(status="open")}
+        if open_syms:
+            kept = drop_open_order_symbols(orders, open_syms)
+            tlog.log(tlog.main, "rebalance_open_order_guard",
+                     f"skipped {len(orders) - len(kept)} names with pending orders: "
+                     f"{sorted(open_syms)}")
+            orders = kept
         results = OrderExecutor(client).submit_market_orders(orders)
         executed = [{"symbol": r.symbol, "status": r.status.value,
                      "filled_qty": r.filled_qty} for r in results]
@@ -1233,6 +1244,54 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
     Path(BOOK_SNAPSHOT).write_text(json.dumps(snapshot, indent=2, default=str))
     tlog.log(tlog.main, "book_snapshot", f"wrote {BOOK_SNAPSHOT}")
     return plan
+
+
+def run_record_track(config: dict[str, Any], credentials: dict[str, str],
+                     path: str = TRACK_RECORD_CSV) -> None:  # pragma: no cover - live broker/market
+    """Append today's book / EW-S&P500 / SPY NAV to the track record (daily gate plumbing).
+
+    Schedule this daily after the close. It reads the book's account equity and the latest
+    two daily closes for SPY and every S&P 500 constituent, computes the one-day SPY and
+    equal-weight returns, and appends a single row via :mod:`core.track_record`. It submits
+    no orders and touches no signal or construction knob — pure measurement, so the frozen
+    forward gate has a clean daily NAV series for the book and **both** benchmarks to
+    evaluate Sharpe / maxDD / DSR at month 12. Idempotent per day (safe to re-run).
+
+    Args:
+        config: Parsed settings.
+        credentials: Broker credentials.
+        path: Track-record CSV (defaults to :data:`TRACK_RECORD_CSV`).
+    """
+    from broker.alpaca_client import AlpacaClient, AlpacaConfig
+    from core import track_record as tr
+    from data.constituents import load_sp500
+    from data.market_data import MarketData
+    from monitoring.logger import LoggerConfig, setup_logging
+
+    tlog = setup_logging(LoggerConfig(log_dir="logs"))
+    proxy = config.get("cross_sectional", {}).get("proxy", "SPY")
+    timeframe = config.get("broker", {}).get("timeframe", "1Day")
+
+    paper = str(credentials.get("paper", "true")).lower() != "false"
+    client = AlpacaClient(AlpacaConfig(credentials["api_key"], credentials["secret_key"], paper=paper))
+    client.connect()
+    equity = float(client.get_account()["equity"])
+    md = MarketData(client)
+
+    spy_hist = md.get_history(proxy, timeframe, 6)
+    spy_prev, spy_cur = float(spy_hist["close"].iloc[-2]), float(spy_hist["close"].iloc[-1])
+    spy_ret = tr.simple_return(spy_prev, spy_cur)
+    date = str(spy_hist.index[-1])[:10]               # the closed-bar date (not wall clock)
+
+    frames = md.get_history_multi(load_sp500(), timeframe, 6)
+    prev = {s: float(df["close"].iloc[-2]) for s, df in frames.items() if len(df) >= 2}
+    cur = {s: float(df["close"].iloc[-1]) for s, df in frames.items() if len(df) >= 2}
+    ew_ret = tr.equal_weight_return(prev, cur)
+
+    tr.append_day(path, date, equity, spy_ret, ew_ret)
+    tlog.log(tlog.main, "track_record",
+             f"{date} book={equity:.0f} spy_ret={spy_ret:+.4f} ew_ret={ew_ret:+.4f} -> {path}",
+             mode="PAPER" if paper else "LIVE")
 
 
 # ===========================================================================
@@ -1364,6 +1423,9 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     mode.add_argument("--rebalance", action="store_true",
                       help="cross-sectional book rebalance (dry-run by default; "
                            "schedule monthly). Add --execute to submit paper orders.")
+    mode.add_argument("--record-track", action="store_true", dest="record_track",
+                      help="append today's book/EW-S&P500/SPY NAV to the track record "
+                           "(schedule daily; gate-evaluation plumbing, no orders)")
     mode.add_argument("--live", action="store_true", help="paper/live trading loop (default)")
 
     parser.add_argument("--execute", action="store_true",
@@ -1404,6 +1466,8 @@ def main(argv: Optional[list[str]] = None) -> None:
     elif args.rebalance:
         run_rebalance(config, load_credentials(), dry_run=not args.execute,
                       universe_limit=args.limit)
+    elif args.record_track:
+        run_record_track(config, load_credentials())
     else:  # default: live
         run_live(config, load_credentials())
 
