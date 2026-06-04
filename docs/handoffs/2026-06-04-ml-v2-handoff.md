@@ -1,10 +1,18 @@
 ---
 type: handoff
-status: active
+status: superseded
 tags: [regime-trader, handoff, ml-v2, cross-sectional, via-c]
 created: 2026-06-04
-next_focus: "ML v2 Phase 2 — bulk SimFin fundamentals + cross-sectional feature panel"
+next_focus: "NONE — Phase 2 done, Phase 3 (ML) DEFERRED. v1 momentum book runs untouched."
 ---
+
+> **SUPERSEDED 2026-06-04.** Phase 2 (bulk adapter + feature panel) is **DONE** (commits
+> `9661525`, `8cf40c5`; 276 tests; fundamentals coverage 477/503). Phase 3 (the ML
+> predictor) is **DEFERRED — do not build it.** Reasoning (can't-validate on survivorship
+> free data / no measured baseline while v1's 12mo clock runs / too few obs to fit+validate):
+> `docs/analysis/2026-06-04-ml-v2-deferral-decision.md`. **Next agent: do NOT pick up Phase 3.**
+> The Phase 1–2 panel is parked infra — activate only if v1 passes its gate AND paid
+> point-in-time data is acquired. The sections below are the original (now historical) plan.
 
 # Handoff — regime-trader ML v2 (Phase 2)
 
