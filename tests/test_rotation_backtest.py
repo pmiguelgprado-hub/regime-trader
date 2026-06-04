@@ -98,6 +98,23 @@ def test_gross_never_exceeds_cap(_frames):
     assert (gross <= 1.0 + 1e-9).all()
 
 
+def test_vr_transform_none_is_identity(_frames):
+    """No transform == passing an identity transform (control-test plumbing)."""
+    bt = _make_backtester()
+    a = bt.run_rotation(_frames, RotationConfig())
+    b = bt.run_rotation(_frames, RotationConfig(), vr_transform=lambda x: x)
+    pd.testing.assert_series_equal(a, b)
+
+
+def test_vr_transform_can_force_risk_off(_frames):
+    """A transform pinning vol_rank high forces the risk-off (no-equity) tier."""
+    _, w = _make_backtester().run_rotation(
+        _frames, RotationConfig(), return_weights=True, vr_transform=lambda x: 1.0
+    )
+    assert (w["SPY"].abs() < 1e-12).all()
+    assert (w["QQQ"].abs() < 1e-12).all()
+
+
 def test_missing_symbol_frame_raises(_ohlcv):
     frames = {"SPY": _ohlcv, "QQQ": _ohlcv, "TLT": _ohlcv}  # GLD missing
     with pytest.raises(ValueError, match="GLD"):

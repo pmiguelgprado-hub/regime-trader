@@ -345,6 +345,8 @@ class Backtester:
         rot_cfg: "RotationConfig",
         proxy: str | None = None,
         return_weights: bool = False,
+        vr_transform=None,
+        base_result: "BacktestResult | None" = None,
     ):
         """Cross-asset regime rotation backtest (vía B).
 
@@ -365,6 +367,13 @@ class Backtester:
             rot_cfg: Frozen rotation configuration (the pre-registered knobs).
             proxy: Regime proxy symbol (defaults to the first frame key).
             return_weights: If True, also return the per-bar weight DataFrame.
+            vr_transform: Optional ``float -> float`` applied to each bar's vol_rank
+                before the rotation map. Used by the skill/permutation control to
+                relabel tiers (e.g. assign equities to the high-vol regime); ``None``
+                is the real, pre-registered mapping.
+            base_result: Optional precomputed proxy ``run()`` result. Reuses the
+                regime detection across calls (e.g. the permutation control runs the
+                walk-forward once, then sweeps tier relabelings). ``None`` recomputes.
 
         Returns:
             Portfolio equity ``Series`` (or ``(equity, weights_df)`` if requested).
@@ -372,7 +381,7 @@ class Backtester:
         from core.asset_rotation import rotation_weights, vol_target_scale
 
         proxy = proxy or next(iter(frames))
-        base = self.run({proxy: frames[proxy]})       # causal regime + vol_rank per bar
+        base = base_result if base_result is not None else self.run({proxy: frames[proxy]})
         vr = base.regime_history["vol_rank"]
         idx = vr.index
         symbols = rot_cfg.symbols
@@ -400,7 +409,10 @@ class Backtester:
             port_hist.append(port_ret)
 
             # 2) target weights for next bar: tier -> rotation map, scaled to vol target
-            base_w = rotation_weights(float(vr.iloc[t]), rot_cfg)
+            pos = float(vr.iloc[t])
+            if vr_transform is not None:
+                pos = vr_transform(pos)
+            base_w = rotation_weights(pos, rot_cfg)
             k = vol_target_scale(
                 port_hist[-rot_cfg.vol_window:],
                 rot_cfg.target_vol, rot_cfg.gross_cap, rot_cfg.gross_floor,
