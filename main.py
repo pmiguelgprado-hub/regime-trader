@@ -1140,6 +1140,7 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
     from core.hmm_engine import HMMEngine
     from core.regime_strategies import StrategyOrchestrator
     from data.constituents import load_sp500
+    from data.feature_engineering import FeatureEngineer
     from data.market_data import MarketData
     from monitoring.logger import LoggerConfig, setup_logging
 
