@@ -97,6 +97,39 @@ def rotation_weights(vol_rank_position: float, cfg: RotationConfig) -> dict[str,
     return out
 
 
+def regime_gross_scale(
+    vol_rank_position: float,
+    risk_on: float = 1.0,
+    risk_off: float = 0.5,
+) -> float:
+    """HMM gross-exposure overlay for a book (vía C risk overlay).
+
+    The expert role of an HMM in a trading system is a *risk filter*, not a signal
+    generator (QuantStart, MDPI; matches this project's own falsification of HMM
+    timing as alpha). Here it scales the **total gross exposure** of the cross-sectional
+    book by the market volatility regime: full exposure in the low-vol (risk-on) tier,
+    de-risked in the high-vol (risk-off) tier, linearly interpolated across the mid band.
+    The alpha comes from the ranker; this only governs how much of it is on.
+
+    Kept separable (a pure scalar map) so the pre-registered gate can measure whether the
+    overlay adds value *incrementally* over the naked ranker — if it doesn't, drop it.
+
+    Args:
+        vol_rank_position: Regime volatility rank in ``[0, 1]`` (0 = lowest vol).
+        risk_on: Gross multiplier in the low-vol tier (``<= LOW_VOL_MAX``).
+        risk_off: Gross multiplier in the high-vol tier (``>= HIGH_VOL_MIN``).
+
+    Returns:
+        Gross-exposure scale factor.
+    """
+    if vol_rank_position <= LOW_VOL_MAX:
+        return risk_on
+    if vol_rank_position >= HIGH_VOL_MIN:
+        return risk_off
+    frac = (vol_rank_position - LOW_VOL_MAX) / (HIGH_VOL_MIN - LOW_VOL_MAX)
+    return risk_on + frac * (risk_off - risk_on)
+
+
 def vol_target_scale(
     trailing_returns,
     target_vol: float,

@@ -1110,6 +1110,95 @@ def run_once(config: dict[str, Any], credentials: dict[str, str],
         raise
 
 
+def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
+                  dry_run: bool = True) -> list[dict]:  # pragma: no cover - live broker/market
+    """Compute (and, when un-gated, submit) the cross-sectional book rebalance (vía C).
+
+    The monthly paper entry point for the cross-sectional return-predictor book: load
+    today's S&P 500 constituents, fetch their history, rank by cross-sectional momentum
+    (the v1 return predictor), take the top decile, scale total gross exposure by the
+    current HMM volatility regime (the risk overlay), size to whole shares against account
+    equity, and report the order plan. Schedule monthly (see
+    ``deploy/com.regimetrader.rebalance.plist``); do NOT drive off the daily/minute cadence.
+
+    Honesty + safety: ``dry_run=True`` (default) computes and logs the plan but submits
+    nothing. Live multi-name submission is **gated** — it needs a supervised paper
+    verification (the project's S-1 discipline) and the pre-registered gate
+    (docs/analysis/2026-06-04-cross-sectional-prereg.md) to pass first. Real money BLOCKED.
+
+    Args:
+        config: Parsed settings (reads the ``cross_sectional`` block).
+        credentials: Broker credentials.
+        dry_run: If True (default), compute + log the plan only.
+
+    Returns:
+        The order plan: ``[{symbol, weight, notional, price, shares}, ...]``.
+    """
+    from broker.alpaca_client import AlpacaClient, AlpacaConfig
+    from core.cross_sectional_ranking import (compute_book_targets,
+                                              targets_to_orders)
+    from core.hmm_engine import HMMEngine
+    from core.regime_strategies import StrategyOrchestrator
+    from data.constituents import load_sp500
+    from data.market_data import MarketData
+    from monitoring.logger import LoggerConfig, setup_logging
+
+    tlog = setup_logging(LoggerConfig(log_dir="logs"))
+    cs = config.get("cross_sectional", {})
+    _, strat_cfg, _ = _core_configs(config)
+    proxy = cs.get("proxy", "SPY")
+    lookback = int(cs.get("lookback", 252))
+    skip = int(cs.get("skip", 21))
+    frac = float(cs.get("top_fraction", 0.10))
+    max_single = float(config.get("risk", {}).get("max_single_position", 0.15))
+    max_concurrent = int(cs.get("max_concurrent", 50))
+
+    paper = str(credentials.get("paper", "true")).lower() != "false"
+    client = AlpacaClient(AlpacaConfig(credentials["api_key"], credentials["secret_key"], paper=paper))
+    client.connect()
+    equity = float(client.get_account()["equity"])
+    md = MarketData(client)
+
+    # Current market volatility regime (HMM on the proxy) -> gross-exposure overlay input.
+    hmm = HMMEngine.load(f"{MODEL_DIR}/hmm_{proxy}.pkl")
+    orch = StrategyOrchestrator(strat_cfg, hmm.regime_info)
+    proxy_hist = md.get_history(proxy, config.get("broker", {}).get("timeframe", "1Day"),
+                                lookback + skip + 300)
+    feats = FeatureEngineer().build_features(proxy_hist)
+    states = hmm.predict_regime_filtered(feats)
+    vol_rank = orch.vol_rank.get(states[-1].state_id, 0.5)
+
+    # Universe history -> cross-sectional rank -> top-decile targets -> share plan.
+    universe = load_sp500()
+    frames = md.get_history_multi(universe, config.get("broker", {}).get("timeframe", "1Day"),
+                                  lookback + skip + 10)
+    targets = compute_book_targets(
+        frames, vol_rank, lookback=lookback, skip=skip, frac=frac,
+        max_single=max_single, max_concurrent=max_concurrent,
+        risk_on_gross=float(cs.get("risk_on_gross", 1.0)),
+        risk_off_gross=float(cs.get("risk_off_gross", 0.5)),
+    )
+    prices = {s: float(frames[s]["close"].iloc[-1]) for s in targets if s in frames}
+    plan = targets_to_orders(targets, equity, prices)
+
+    tlog.log(tlog.main, "rebalance_plan",
+             f"vol_rank={vol_rank:.2f} names={len(plan)} gross={sum(o['weight'] for o in plan):.2f}",
+             mode="PAPER" if paper else "LIVE", dry_run=dry_run)
+    for o in plan:
+        tlog.log(tlog.main, "rebalance_target",
+                 f"{o['symbol']}: {o['shares']}sh @ {o['price']:.2f} (w={o['weight']:.3f})")
+
+    if not dry_run:
+        raise NotImplementedError(
+            "Live submission of the cross-sectional book is gated: it requires the "
+            "OrderExecutor multi-name path plus a supervised paper verification (S-1 "
+            "discipline) and the pre-registered gate "
+            "(docs/analysis/2026-06-04-cross-sectional-prereg.md) to pass first. "
+            "Run with dry_run=True to inspect the plan."
+        )
+    return plan
+
+
 # ===========================================================================
 # Backtest mode (Phase 4 — unchanged)
 # ===========================================================================
@@ -1236,6 +1325,9 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     mode.add_argument("--dashboard", action="store_true", help="render dashboard for last state")
     mode.add_argument("--run-once", action="store_true", dest="run_once",
                       help="one daily decision cycle then exit (schedule this for daily)")
+    mode.add_argument("--rebalance", action="store_true",
+                      help="compute the cross-sectional book rebalance plan (dry-run; "
+                           "schedule monthly). Live submission is gated.")
     mode.add_argument("--live", action="store_true", help="paper/live trading loop (default)")
 
     parser.add_argument("--compare", action="store_true", help="add benchmark comparison (backtest)")
@@ -1268,6 +1360,8 @@ def main(argv: Optional[list[str]] = None) -> None:
         run_dashboard(config)
     elif args.run_once:
         run_once(config, load_credentials())
+    elif args.rebalance:
+        run_rebalance(config, load_credentials(), dry_run=True)
     else:  # default: live
         run_live(config, load_credentials())
 

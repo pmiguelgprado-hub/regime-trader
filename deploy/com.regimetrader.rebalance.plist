@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  regime-trader cross-sectional book monthly rebalance (launchd LaunchAgent).
+  Runs `main.py --rebalance` on the 1st of each month, ~22:30 CEST (after the US
+  close). v1 is DRY-RUN: it computes and logs the target book + order plan but
+  submits nothing. Live submission is gated (see run_rebalance + the pre-registered
+  gate doc). Real money BLOCKED.
+
+  Install (when ready to accumulate the dry-run plan log):
+    cp deploy/com.regimetrader.rebalance.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.regimetrader.rebalance.plist
+  Stop:
+    launchctl unload ~/Library/LaunchAgents/com.regimetrader.rebalance.plist
+  Run now (test):
+    launchctl start com.regimetrader.rebalance
+
+  NOT loaded by this session: enabling it (and later switching to live submission)
+  is Pablo's gated step, after a supervised paper verification.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.regimetrader.rebalance</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/pablomiguelgonzalezprado/AIOS/projects/regime-trader/.venv/bin/python</string>
+    <string>main.py</string>
+    <string>--rebalance</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/pablomiguelgonzalezprado/AIOS/projects/regime-trader</string>
+
+  <!-- 1st of each month at 22:30 local time (Day omitted month-part = every month). -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Day</key><integer>1</integer>
+    <key>Hour</key><integer>22</integer>
+    <key>Minute</key><integer>30</integer>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/pablomiguelgonzalezprado/AIOS/projects/regime-trader/logs/rebalance.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/pablomiguelgonzalezprado/AIOS/projects/regime-trader/logs/rebalance.err.log</string>
+</dict>
+</plist>

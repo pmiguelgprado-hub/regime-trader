@@ -284,8 +284,9 @@ class Backtester:
             initial_capital=cap,
         )
 
-    def run_portfolio(self, frames: dict[str, pd.DataFrame], return_weights: bool = False):
-        """Multi-asset backtest (E-1): regime sets the gross budget, split across names.
+    def run_portfolio(self, frames: dict[str, pd.DataFrame], return_weights: bool = False,
+                      weight_fn=None):
+        """Multi-asset backtest: regime sets the gross budget, split across names.
 
         The market-wide volatility regime (detected on the **primary** symbol via
         the existing single-asset walk-forward) sets HOW MUCH gross exposure the
@@ -293,12 +294,22 @@ class Backtester:
         that budget equally across the universe, capped per name
         (``max_single_position``) and by count (``max_concurrent``). Portfolio
         return is the weighted sum of per-symbol returns; slippage is charged on
-        per-name turnover. v1 = equal-weight, shared regime (see the optimization
-        roadmap doc for the design + forks).
+        per-name turnover. v1 default = equal-weight, shared regime (E-1).
+
+        ``weight_fn`` overrides the equal-split with a caller-supplied allocation —
+        used by the **cross-sectional book** (vía C): a momentum ranker picks the
+        top-decile names and the HMM ``vol_rank`` scales gross exposure (see
+        :func:`~core.cross_sectional_ranking.make_book_weights`). When given,
+        ``weight_fn(timestamp, vol_rank) -> {symbol: weight}`` is called each bar.
+        Idle cash (``1 - sum(weights)``) earns the risk-free rate when
+        ``credit_cash_rf`` is set, so a de-risked book is scored fairly (same matched
+        cost engine as :meth:`run_rotation`).
 
         Args:
             frames: ``{symbol: OHLCV}``; the first symbol drives the regime.
             return_weights: If True, also return the per-bar weight DataFrame.
+            weight_fn: Optional ``(timestamp, vol_rank) -> {symbol: weight}``; defaults
+                to equal-split of the regime budget.
 
         Returns:
             Portfolio equity ``Series`` (or ``(equity, weights_df)`` if requested).
@@ -307,12 +318,14 @@ class Backtester:
         primary = symbols[0]
         base = self.run({primary: frames[primary]})   # regime + gross budget per OOS bar
         budget = base.regime_history["weight"]
+        vol_rank = base.regime_history["vol_rank"]
         idx = budget.index
         rc = self.risk_manager.config
         rets = {
             s: frames[s]["close"].pct_change().reindex(idx).fillna(0.0).to_numpy()
             for s in symbols
         }
+        rf_daily = (self.config.risk_free_rate / 252.0) if self.config.credit_cash_rf else 0.0
 
         equity = self.config.initial_capital
         eq_val: list[float] = []
@@ -320,13 +333,17 @@ class Backtester:
         prev_w = {s: 0.0 for s in symbols}
 
         for t in range(len(idx)):
-            # 1) realize prior weights against this bar's returns
-            port_ret = sum(prev_w[s] * rets[s][t] for s in symbols)
-            equity *= (1.0 + port_ret)
-            # 2) new target weights from this bar's regime budget
-            w = portfolio_target_weights(
-                float(budget.iloc[t]), symbols, rc.max_single_position, rc.max_concurrent
-            )
+            # 1) realize prior weights against this bar's returns; idle cash earns rf
+            risky_ret = sum(prev_w[s] * rets[s][t] for s in symbols)
+            cash_w = 1.0 - sum(prev_w.values())
+            equity *= (1.0 + risky_ret + cash_w * rf_daily)
+            # 2) new target weights: caller-supplied (cross-sectional) or equal-split
+            if weight_fn is not None:
+                w = weight_fn(idx[t], float(vol_rank.iloc[t]))
+            else:
+                w = portfolio_target_weights(
+                    float(budget.iloc[t]), symbols, rc.max_single_position, rc.max_concurrent
+                )
             # 3) slippage on per-name turnover
             turnover = sum(abs(w.get(s, 0.0) - prev_w[s]) for s in symbols)
             equity *= (1.0 - turnover * self.config.slippage_pct)
