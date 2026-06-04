@@ -51,6 +51,8 @@ backtest_output/
 tmp/
 *.pkl
 *.joblib
+# regenerable point-in-time feature panel snapshot (ML v2 Phase 2)
+data/feature_panel_latest.csv
 
 # --- OS / editor ---
 .DS_Store

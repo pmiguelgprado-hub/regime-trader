@@ -8,6 +8,7 @@ scikit-learn==1.8.0
 # --- Broker / market data ---
 alpaca-py==0.43.4          # the SDK actually used (alpaca-trade-api was legacy/dead)
 yfinance==1.4.1            # keyless historical data source for backtests
+simfin==1.0.2              # bulk fundamentals (ML v2): whole-universe download, no per-ticker 429
 
 # --- Data / numerics ---
 pandas==3.0.3
