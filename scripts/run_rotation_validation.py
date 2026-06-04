@@ -59,20 +59,29 @@ def metrics(equity, label):
 
 
 def run_books(frames, idx, rf_daily, slip):
-    """Equity curves for rotation + benchmarks over a shared index."""
+    """Equity curves for rotation + benchmarks over a shared index.
+
+    Proxy is SPY explicitly (the pre-registered choice). A bare run_rotation(frames)
+    would default to the first sorted frame key (GLD) — a wrong-proxy bug that
+    inflated an earlier draw. Benchmarks: classic 60/40, risk-parity, and the
+    decisive static EQUAL-WEIGHT hold of the same basket (no timing — if the
+    rotation can't beat just holding its own sleeve, the regime adds nothing).
+    """
     bt = build_backtester(CFG)
     bt.config = dataclasses.replace(bt.config, credit_cash_rf=True)
-    rot = bt.run_rotation(frames, ROT)
+    rot = bt.run_rotation(frames, ROT, proxy="SPY")
     idx = rot.index  # rotation defines the OOS span
     s6040 = static_mix_returns(frames, {"SPY": 0.6, "TLT": 0.4}, idx, slip, rf_daily)
     rp = risk_parity_returns({s: frames[s] for s in ROT.symbols}, idx, slip, rf_daily)
-    return {"rotation": rot, "static_6040": s6040, "risk_parity": rp}
+    ew = {s: 1.0 / len(ROT.symbols) for s in ROT.symbols}
+    eqw = static_mix_returns({s: frames[s] for s in ROT.symbols}, ew, idx, slip, rf_daily)
+    return {"rotation": rot, "static_6040": s6040, "risk_parity": rp, "static_basket": eqw}
 
 
-def gate(rot_m, b1_m, b2_m):
-    """Rotation beats BOTH benchmarks on Sharpe AND Calmar (one slice)."""
-    return (rot_m["sharpe"] > b1_m["sharpe"] and rot_m["calmar"] > b1_m["calmar"]
-            and rot_m["sharpe"] > b2_m["sharpe"] and rot_m["calmar"] > b2_m["calmar"])
+def gate(rot_m, benches):
+    """Rotation beats EVERY benchmark on Sharpe AND Calmar (one slice)."""
+    return all(rot_m["sharpe"] > b["sharpe"] and rot_m["calmar"] > b["calmar"]
+               for b in benches)
 
 
 def main():
@@ -101,18 +110,19 @@ def main():
     for pname, pidx in periods.items():
         m = {k: metrics(v.reindex(pidx).dropna(), f"{k}/{pname}") for k, v in books.items()}
         report["periods"][pname] = m
-        passed = gate(m["rotation"], m["static_6040"], m["risk_parity"])
+        benches = [m["static_6040"], m["risk_parity"], m["static_basket"]]
+        passed = gate(m["rotation"], benches)
         dsr_ok = m["rotation"]["dsr"] > 0  # pre-registered floor
-        report["gate"][pname] = {"beats_both_risk_adjusted": passed, "dsr_gt_0": dsr_ok}
+        report["gate"][pname] = {"beats_all_risk_adjusted": passed, "dsr_gt_0": dsr_ok}
         print(f"\n=== {pname} ===", flush=True)
-        for k in ("rotation", "static_6040", "risk_parity"):
+        for k in ("rotation", "static_6040", "risk_parity", "static_basket"):
             x = m[k]
             print(f"  {k:14s} ret={x['total_return']:+.1%} CAGR={x['cagr']:+.2%} "
                   f"Sharpe={x['sharpe']:.2f} Calmar={x['calmar']:.2f} "
                   f"maxDD={x['max_dd']:.1%} DSR={x['dsr']:.3f}", flush=True)
-        print(f"  GATE beats-both(Sharpe&Calmar)={passed}  DSR>0={dsr_ok}", flush=True)
+        print(f"  GATE beats-all(Sharpe&Calmar)={passed}  DSR>0={dsr_ok}", flush=True)
 
-    overall = all(report["gate"][p]["beats_both_risk_adjusted"]
+    overall = all(report["gate"][p]["beats_all_risk_adjusted"]
                   and report["gate"][p]["dsr_gt_0"] for p in periods)
     report["verdict"] = "PASS" if overall else "FAIL"
     print(f"\n{'='*50}\nPRE-REGISTERED VERDICT: {report['verdict']}", flush=True)
