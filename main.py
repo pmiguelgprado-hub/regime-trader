@@ -1251,11 +1251,12 @@ def run_record_track(config: dict[str, Any], credentials: dict[str, str],
     """Append today's book / EW-S&P500 / SPY NAV to the track record (daily gate plumbing).
 
     Schedule this daily after the close. It reads the book's account equity and the latest
-    two daily closes for SPY and every S&P 500 constituent, computes the one-day SPY and
-    equal-weight returns, and appends a single row via :mod:`core.track_record`. It submits
-    no orders and touches no signal or construction knob — pure measurement, so the frozen
-    forward gate has a clean daily NAV series for the book and **both** benchmarks to
-    evaluate Sharpe / maxDD / DSR at month 12. Idempotent per day (safe to re-run).
+    two daily closes for SPY (cap-weight benchmark) and RSP (Invesco S&P 500 Equal Weight —
+    the investable, net-of-fee equal-weight benchmark), computes their one-day returns, and
+    appends a single row via :mod:`core.track_record`. It submits no orders and touches no
+    signal or construction knob — pure measurement, so the frozen forward gate has a clean
+    daily NAV series for the book and **both** benchmarks to evaluate Sharpe / maxDD / DSR at
+    month 12. Idempotent per day (safe to re-run).
 
     Args:
         config: Parsed settings.
@@ -1264,12 +1265,12 @@ def run_record_track(config: dict[str, Any], credentials: dict[str, str],
     """
     from broker.alpaca_client import AlpacaClient, AlpacaConfig
     from core import track_record as tr
-    from data.constituents import load_sp500
     from data.market_data import MarketData
     from monitoring.logger import LoggerConfig, setup_logging
 
     tlog = setup_logging(LoggerConfig(log_dir="logs"))
     proxy = config.get("cross_sectional", {}).get("proxy", "SPY")
+    ew_proxy = config.get("cross_sectional", {}).get("ew_proxy", "RSP")
     timeframe = config.get("broker", {}).get("timeframe", "1Day")
 
     paper = str(credentials.get("paper", "true")).lower() != "false"
@@ -1278,15 +1279,13 @@ def run_record_track(config: dict[str, Any], credentials: dict[str, str],
     equity = float(client.get_account()["equity"])
     md = MarketData(client)
 
-    spy_hist = md.get_history(proxy, timeframe, 6)
-    spy_prev, spy_cur = float(spy_hist["close"].iloc[-2]), float(spy_hist["close"].iloc[-1])
-    spy_ret = tr.simple_return(spy_prev, spy_cur)
-    date = str(spy_hist.index[-1])[:10]               # the closed-bar date (not wall clock)
+    def _last_ret(symbol: str) -> "tuple[float, str]":
+        hist = md.get_history(symbol, timeframe, 6)
+        ret = tr.simple_return(float(hist["close"].iloc[-2]), float(hist["close"].iloc[-1]))
+        return ret, str(hist.index[-1])[:10]          # return + closed-bar date (not wall clock)
 
-    frames = md.get_history_multi(load_sp500(), timeframe, 6)
-    prev = {s: float(df["close"].iloc[-2]) for s, df in frames.items() if len(df) >= 2}
-    cur = {s: float(df["close"].iloc[-1]) for s, df in frames.items() if len(df) >= 2}
-    ew_ret = tr.equal_weight_return(prev, cur)
+    spy_ret, date = _last_ret(proxy)
+    ew_ret, _ = _last_ret(ew_proxy)
 
     tr.append_day(path, date, equity, spy_ret, ew_ret)
     tlog.log(tlog.main, "track_record",

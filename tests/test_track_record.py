@@ -15,18 +15,6 @@ import pytest
 from core import track_record as tr
 
 
-def test_equal_weight_return_mean_over_common_names() -> None:
-    prev = {"A": 10.0, "B": 20.0, "C": 5.0, "D": 0.0}
-    cur = {"A": 11.0, "B": 22.0, "C": 5.0, "E": 99.0}
-    # A +10%, B +10%, C 0%; D has prev<=0 (skip), E not in prev (skip)
-    assert tr.equal_weight_return(prev, cur) == pytest.approx((0.1 + 0.1 + 0.0) / 3)
-
-
-def test_equal_weight_return_empty_is_zero() -> None:
-    assert tr.equal_weight_return({}, {}) == 0.0
-    assert tr.equal_weight_return({"A": 10.0}, {"B": 5.0}) == 0.0  # no common names
-
-
 def test_simple_return() -> None:
     assert tr.simple_return(100.0, 105.0) == pytest.approx(0.05)
     assert tr.simple_return(0.0, 105.0) == 0.0  # guard against div0

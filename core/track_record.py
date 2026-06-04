@@ -11,10 +11,25 @@ chained EW-S&P500 and SPY index levels — to a CSV. The two benchmark indices a
 equal to the book's day-1 equity**, so all three curves start at the same value and are
 directly comparable (returns, Sharpe, maxDD, DSR all derive from the levels at eval time).
 
-This is pure measurement: it touches no signal, no construction knob, and cannot affect
-the gate's frozen parameters. The return math and the idempotent CSV append are unit-tested
-here; the daily data fetch (broker equity, SPY + constituent closes) is live glue in
-``main`` (injected, so this stays network-free and deterministic).
+**Benchmark realization (matches the frozen gate's net-of-cost intent).** The two
+benchmarks are recorded as **investable ETF buy-and-hold NAVs**: SPY for the cap-weight
+index and **RSP** (Invesco S&P 500 Equal Weight) for the equal-weight control. Using RSP —
+rather than a hand-rolled mean-of-daily-returns — avoids a subtle bias: a synthetic
+daily-rebalanced EW would be recorded *gross* of its real turnover cost, while the book NAV
+is *net* (real fills), so the comparison would be unfairly hard on the book. Two real ETF
+price series (≈costless to hold, net of their tiny expense ratio) are buy-and-hold by
+construction and directly comparable to the book's realized equity. The book equity path
+itself is the one series not cleanly reconstructable after the fact, which is the core
+reason this recorder must run daily.
+
+Known residual approximation: ``book_nav`` is raw account equity and does not credit idle
+cash at the risk-free rate (the gate's ``credit_cash_rf``); at ~98% gross invested this is
+~0.1%/yr and is left uncaptured (documented, not silently dropped).
+
+This is pure measurement: it touches no signal, no construction knob, and cannot affect the
+gate's frozen parameters. The return math and the idempotent CSV append are unit-tested here;
+the daily data fetch (broker equity, SPY + RSP closes) is live glue in ``main`` (injected, so
+this stays network-free and deterministic).
 """
 
 from __future__ import annotations
@@ -32,27 +47,6 @@ def simple_return(prev: float, cur: float) -> float:
     if prev is None or prev <= 0.0:
         return 0.0
     return cur / prev - 1.0
-
-
-def equal_weight_return(prev: dict[str, float], cur: dict[str, float]) -> float:
-    """Equal-weight daily return across names present (with a valid prior) in both maps.
-
-    The EW-S&P 500 benchmark return: the simple mean of each constituent's one-day return,
-    over the names that have a usable previous close (``prev > 0``) and a current close.
-    Names missing on either side, or with a non-positive prior, are skipped. Returns 0.0
-    when no name qualifies (the index simply holds flat that day rather than crashing).
-
-    Args:
-        prev: ``{symbol: previous_close}``.
-        cur: ``{symbol: current_close}``.
-
-    Returns:
-        The equal-weight cross-sectional mean return.
-    """
-    rets = [cur[s] / prev[s] - 1.0
-            for s in prev.keys() & cur.keys()
-            if prev[s] and prev[s] > 0.0]
-    return sum(rets) / len(rets) if rets else 0.0
 
 
 def load_track_record(path: str) -> pd.DataFrame:
@@ -78,7 +72,7 @@ def append_day(path: str, date: str, book_equity: float,
         date: ISO date string for the row (the dedup key).
         book_equity: The book's account equity that day (the real, net NAV level).
         spy_ret: SPY one-day simple return (from :func:`simple_return`).
-        ew_ret: EW-S&P 500 one-day return (from :func:`equal_weight_return`).
+        ew_ret: Equal-weight benchmark one-day return — RSP ETF (from :func:`simple_return`).
     """
     df = load_track_record(path)
     if not df.empty and str(df.iloc[-1]["date"]) == str(date):
