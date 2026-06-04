@@ -40,11 +40,28 @@ BulkFetcher = Callable[[], "tuple[pd.DataFrame, pd.DataFrame]"]
 _DATA_DIR = Path.home() / "AIOS" / "tmp" / "simfin_data"
 
 
+def _merge_segments(frames: list[pd.DataFrame]) -> pd.DataFrame:
+    """Concat the general + banks + insurance segment frames into one panel.
+
+    SimFin **segregates banks and insurers** into dedicated datasets — the general
+    ``us-income`` / ``us-balance`` exclude them, so loading only the general set silently
+    drops every financial (BAC, C, JPM, AIG, ...), which carry real index weight. Concat
+    aligns columns by name (segment-specific columns become NaN elsewhere); the only field
+    the feature math reads that banks/insurers lack is ``Gross Profit`` (no COGS), so their
+    ``gross_*`` factors are NaN while ``roe/roa/leverage`` are valid — 3 of 5 factors. A
+    ticker appearing in two segments keeps its first row (general wins).
+    """
+    combined = pd.concat([f for f in frames if f is not None and not f.empty])
+    return combined[~combined.index.duplicated(keep="first")]
+
+
 def _default_bulk_fetch(market: str = "us", variant: str = "annual") -> tuple[pd.DataFrame, pd.DataFrame]:
     """Real bulk download via the ``simfin`` package (cached to :data:`_DATA_DIR`).
 
-    Reads ``SIMFIN_API_KEY`` from the environment (loaded from ``.env``); falls back
-    to the anonymous ``"free"`` key. Never logs the key.
+    Pulls the **general + banks + insurance** segments for both income and balance and
+    merges them (see :func:`_merge_segments`) so financials are not dropped. Reads
+    ``SIMFIN_API_KEY`` from the environment (loaded from ``.env``); falls back to the
+    anonymous ``"free"`` key. Never logs the key.
     """
     import simfin as sf  # local import: keep the package optional for unit tests
 
@@ -52,8 +69,16 @@ def _default_bulk_fetch(market: str = "us", variant: str = "annual") -> tuple[pd
     sf.set_api_key(key)
     _DATA_DIR.mkdir(parents=True, exist_ok=True)
     sf.set_data_dir(str(_DATA_DIR))
-    income = sf.load_income(variant=variant, market=market)
-    balance = sf.load_balance(variant=variant, market=market)
+    income = _merge_segments([
+        sf.load_income(variant=variant, market=market),
+        sf.load_income_banks(variant=variant, market=market),
+        sf.load_income_insurance(variant=variant, market=market),
+    ])
+    balance = _merge_segments([
+        sf.load_balance(variant=variant, market=market),
+        sf.load_balance_banks(variant=variant, market=market),
+        sf.load_balance_insurance(variant=variant, market=market),
+    ])
     return income, balance
 
 

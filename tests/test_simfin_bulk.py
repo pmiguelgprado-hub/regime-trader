@@ -84,3 +84,29 @@ def test_load_bulk_injectable_fetch() -> None:
     sentinel = (_income(), _balance())
     inc, bal = simfin_bulk.load_bulk(fetch=lambda: sentinel)
     assert inc is sentinel[0] and bal is sentinel[1]
+
+
+def test_merge_segments_unions_and_dedups() -> None:
+    # general (AAPL/MSFT) + a "banks" segment (JPM, plus a duplicate AAPL row)
+    banks = pd.DataFrame(
+        [
+            {"Ticker": "JPM", "Report Date": "2023-12-31", "Publish Date": "2024-02-01",
+             "Revenue": 158.0, "Net Income": 49.0},                 # no Gross Profit (banks)
+            {"Ticker": "AAPL", "Report Date": "2023-09-30", "Publish Date": "2099-01-01",
+             "Revenue": -1.0, "Net Income": -1.0},                  # duplicate -> must be dropped
+        ]
+    ).set_index(["Ticker", "Report Date"])
+    merged = simfin_bulk._merge_segments([_income(), banks])
+    tickers = set(merged.index.get_level_values("Ticker"))
+    assert tickers == {"AAPL", "MSFT", "JPM"}                       # financial recovered
+    # general AAPL row wins the collision (Revenue 383, not the -1 sentinel)
+    aapl_2023 = merged.loc[("AAPL", "2023-09-30")]
+    assert aapl_2023["Revenue"] == 383.0
+    # bank with no Gross Profit column -> NaN there, but block still usable for roe/roa
+    blocks = simfin_bulk.to_company_blocks(merged, pd.DataFrame())
+    assert "JPM" in blocks
+
+
+def test_merge_segments_skips_empty() -> None:
+    merged = simfin_bulk._merge_segments([_income(), pd.DataFrame(), None])
+    assert set(merged.index.get_level_values("Ticker")) == {"AAPL", "MSFT"}
