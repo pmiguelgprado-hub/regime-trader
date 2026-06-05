@@ -122,6 +122,75 @@ def deflated_sharpe_ratio(
     return probabilistic_sharpe_ratio(sr, sr0, n_obs, skew, kurt)
 
 
+def pbo_cscv(returns_matrix, n_splits: int = 16) -> float:
+    """Probability of Backtest Overfitting via CSCV (Bailey & López de Prado, 2015).
+
+    Given per-bar returns for several strategy *configurations* (columns), the
+    Combinatorially-Symmetric Cross-Validation procedure splits the ``T`` observations
+    into ``n_splits`` contiguous blocks, forms every balanced in-sample / out-of-sample
+    partition (half the blocks IS, half OOS), picks the **best in-sample-Sharpe** config in
+    each partition, and records its out-of-sample rank. PBO is the fraction of partitions
+    where that in-sample winner lands in the *bottom half* out-of-sample — how often
+    selecting on backtest performance is expected to backfire.
+
+    PBO near 0 means the in-sample winner generalizes; ``>= 0.5`` means the selection is
+    overfit. The challenger gate requires ``< 0.5``. The pooled-block Sharpe is computed
+    exactly from per-block sums/sum-of-squares (so the ~12.8k partitions of ``n_splits=16``
+    stay cheap). Needs ``>= 2`` configs and an even ``n_splits >= 2``.
+
+    Args:
+        returns_matrix: ``(T, N)`` array-like of per-bar returns; columns = configs.
+        n_splits: Even number of contiguous CSCV blocks (default 16).
+
+    Returns:
+        PBO probability in ``[0, 1]`` (``nan`` if inputs are insufficient).
+    """
+    from itertools import combinations
+
+    M = np.asarray(returns_matrix, dtype=float)
+    if M.ndim != 2 or M.shape[1] < 2:
+        return float("nan")
+    n_splits -= n_splits % 2
+    if n_splits < 2:
+        return float("nan")
+    T, N = M.shape
+    if T < n_splits:
+        return float("nan")
+
+    block = T // n_splits
+    counts = np.array([block] * n_splits)
+    s1 = np.vstack([M[i * block:(i + 1) * block].sum(axis=0) for i in range(n_splits)])
+    s2 = np.vstack([(M[i * block:(i + 1) * block] ** 2).sum(axis=0) for i in range(n_splits)])
+
+    def _pooled_sharpe(sel: tuple[int, ...]) -> np.ndarray:
+        n = int(counts[list(sel)].sum())
+        S1 = s1[list(sel)].sum(axis=0)
+        S2 = s2[list(sel)].sum(axis=0)
+        mean = S1 / n
+        var = (S2 - S1 * S1 / n) / (n - 1)
+        sd = np.sqrt(np.where(var > 0, var, np.nan))
+        return mean / sd
+
+    idx = list(range(n_splits))
+    overfit = 0
+    total = 0
+    for is_sel in combinations(idx, n_splits // 2):
+        oos_sel = tuple(i for i in idx if i not in set(is_sel))
+        s_is = _pooled_sharpe(is_sel)
+        if np.all(np.isnan(s_is)):
+            continue
+        s_oos = _pooled_sharpe(oos_sel)
+        best = int(np.nanargmax(s_is))
+        order = np.argsort(np.argsort(np.nan_to_num(s_oos, nan=-np.inf)))
+        rank = float(order[best] + 1)          # 1 = worst OOS, N = best OOS
+        omega = min(max(rank / (N + 1), 1e-6), 1 - 1e-6)
+        overfit += 1 if math.log(omega / (1 - omega)) <= 0.0 else 0
+        total += 1
+    if total == 0:
+        return float("nan")
+    return overfit / total
+
+
 @dataclass
 class PerformanceReport:
     """Summary of backtest performance."""

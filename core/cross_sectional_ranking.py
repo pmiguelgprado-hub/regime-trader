@@ -89,6 +89,116 @@ def rank_universe(
     return [sym for sym, _ in scored]
 
 
+DEFAULT_EST_WINDOW = 504
+
+
+def residual_momentum_score(
+    close: pd.Series,
+    market_close: pd.Series,
+    lookback: int = DEFAULT_LOOKBACK,
+    skip: int = DEFAULT_SKIP,
+    est_window: int = DEFAULT_EST_WINDOW,
+    min_obs: int = 60,
+) -> float:
+    """Idiosyncratic (residual) momentum: market-model residual 12-1, IR-standardized.
+
+    The Blitz-Huij-Martens (2011) / Chaves (2016) iMOM signal, market-model version:
+
+    1. Estimate the name's market beta + alpha by OLS ``r_stock = a + b·r_market + e`` over
+       a **longer estimation window** (``est_window`` ≈ 24 months ending at ``t``).
+    2. Form residual returns over the **recent scoring sub-window** ``[t-lookback, t-skip]``
+       (≈ the 12-1 window) using those estimated coefficients.
+    3. Score = ``mean(residual) / std(residual)`` over the scoring window — an
+       information-ratio of *recent firm-specific* return.
+
+    The estimation/scoring split is essential: OLS residuals over their own fit window sum
+    to zero by construction, so the signal must score a recent **sub-window** against
+    coefficients fit on a longer one. The signal captures recent idiosyncratic
+    outperformance (slow information diffusion) without the market-beta exposure that makes
+    raw momentum crash on sharp reversals — ~2x the Sharpe of conventional momentum with
+    crash risk ≈ eliminated, replicated across 21 countries incl. Japan.
+
+    Strictly causal: uses only closes up to the decision bar; the most recent ``skip``
+    return bars are excluded (short-term reversal), mirroring :func:`momentum_score`.
+
+    Args:
+        close: Name's close series ending at the decision bar (most recent last).
+        market_close: Market-proxy (e.g. SPY) close series, same convention.
+        lookback: Bars back to the scoring-window start (≈12 months).
+        skip: Most-recent return bars to exclude (≈1 month).
+        est_window: Estimation-window length for the beta/alpha fit (≈24 months).
+        min_obs: Minimum bars required in each of the estimation and scoring windows.
+
+    Returns:
+        Standardized residual momentum (``mean(resid) / std(resid)``), or ``nan`` if there
+        is too little history or the regression/residuals are degenerate (dropped names).
+    """
+    import numpy as np
+
+    if lookback <= skip:
+        return float("nan")
+    aligned = pd.concat(
+        [close.pct_change(), market_close.pct_change()], axis=1, join="inner"
+    ).dropna()
+    if len(aligned) < max(lookback, min_obs):
+        return float("nan")
+
+    est = aligned.iloc[-est_window:] if est_window else aligned
+    if len(est) < min_obs:
+        return float("nan")
+    ye = est.iloc[:, 0].to_numpy()
+    xe = est.iloc[:, 1].to_numpy()
+    xm = float(xe.mean())
+    var_x = float(((xe - xm) ** 2).sum())
+    if var_x <= 0.0:
+        return float("nan")
+    beta = float(((xe - xm) * (ye - ye.mean())).sum() / var_x)
+    alpha = float(ye.mean() - beta * xm)
+
+    window = aligned.iloc[-lookback:]
+    if skip > 0:
+        window = window.iloc[:-skip]
+    if len(window) < min_obs:
+        return float("nan")
+    ys = window.iloc[:, 0].to_numpy()
+    xs = window.iloc[:, 1].to_numpy()
+    resid = ys - (alpha + beta * xs)
+    sd = float(np.std(resid, ddof=1))
+    if not (sd > 0.0):
+        return float("nan")
+    return float(resid.mean() / sd)
+
+
+def rank_universe_residual(
+    frames: dict[str, pd.DataFrame],
+    market_close: pd.Series,
+    lookback: int = DEFAULT_LOOKBACK,
+    skip: int = DEFAULT_SKIP,
+) -> list[str]:
+    """Rank a universe by descending **residual** (idiosyncratic) momentum.
+
+    The challenger counterpart of :func:`rank_universe`: identical contract (drop
+    un-scoreable names, ties break by symbol for determinism / R-4 reproducibility) but
+    scores with :func:`residual_momentum_score` against a shared market proxy.
+
+    Args:
+        frames: ``{symbol: OHLCV}`` with a ``close`` column, each ending at the decision bar.
+        market_close: Market-proxy close series (e.g. SPY), ending at the same bar.
+        lookback: Momentum lookback in bars.
+        skip: Momentum skip in bars.
+
+    Returns:
+        Symbols ordered best residual-momentum first.
+    """
+    scored: list[tuple[str, float]] = []
+    for sym, df in frames.items():
+        score = residual_momentum_score(df["close"], market_close, lookback, skip)
+        if score == score:   # not nan
+            scored.append((sym, score))
+    scored.sort(key=lambda kv: (-kv[1], kv[0]))
+    return [sym for sym, _ in scored]
+
+
 def select_top(ranked: list[str], frac: float = TOP_DECILE) -> list[str]:
     """Select the top ``frac`` of a ranked list (at least one name if non-empty).
 
@@ -214,6 +324,102 @@ def make_book_weights(
                    if sector_map else select_top(ranked, frac))
             cache[key] = top
         gross = regime_gross_scale(vol_rank, risk_on_gross, risk_off_gross) if use_overlay else 1.0
+        return portfolio_target_weights(gross, top, max_single, max_concurrent)
+
+    return weight_fn
+
+
+def make_book_weights_challenger(
+    frames: dict[str, pd.DataFrame],
+    market_close: pd.Series,
+    lookback: int = DEFAULT_LOOKBACK,
+    skip: int = DEFAULT_SKIP,
+    frac: float = TOP_DECILE,
+    max_single: float = 0.15,
+    max_concurrent: int = 50,
+    overlay: str = "vol_target",
+    risk_on_gross: float = 1.0,
+    risk_off_gross: float = 0.5,
+    target_vol: float = 0.12,
+    vol_window: int = 126,
+    gross_cap: float = 1.0,
+    gross_floor: float = 0.0,
+    sector_map: dict[str, str] | None = None,
+    max_sector_frac: float = 0.30,
+) -> Callable[[pd.Timestamp, float], dict[str, float]]:
+    """Build the **challenger** monthly weight function (residual momentum + vol-target).
+
+    Same ``weight_fn(ts, vol_rank) -> {symbol: weight}`` contract as
+    :func:`make_book_weights`, but two evidence-backed swaps over the frozen baseline:
+
+    1. **Alpha = residual momentum** (:func:`rank_universe_residual`) instead of raw 12-1 —
+       the idiosyncratic-momentum signal (Chaves 2016; Blitz-Huij-Martens 2011) that
+       roughly doubles Sharpe and removes crash risk in the literature.
+    2. **Risk overlay = volatility targeting** (Daniel-Moskowitz 2016; Barroso-Santa-Clara
+       2015) via the existing :func:`~core.asset_rotation.vol_target_scale`, scaling gross
+       so the book's realized vol approaches ``target_vol``. ``overlay`` selects how the
+       gross is set, so the pre-registered eval can attribute the edge:
+
+       * ``"none"``       — gross pinned to 1.0 (naked residual ranker).
+       * ``"hmm"``        — the baseline HMM ``regime_gross_scale`` overlay.
+       * ``"vol_target"`` — constant-vol-target scaling (default).
+       * ``"both"``       — product of the HMM and vol-target multipliers (capped).
+
+    Gross is set **at each monthly rebalance** (and held through the month, with the
+    selection), matching how a monthly book actually re-levers — not a daily churn.
+    Strictly causal: the ranker, the proxy, and the book-vol estimate are all sliced
+    ``up to`` ``ts``.
+
+    Args:
+        frames: ``{symbol: OHLCV}`` full history (sliced causally per bar).
+        market_close: Market-proxy close series for the residual regression (e.g. SPY).
+        lookback, skip, frac: Momentum window + top-fraction (fixed, un-swept).
+        max_single, max_concurrent: Per-name and count caps.
+        overlay: Gross-overlay mode (see above).
+        risk_on_gross, risk_off_gross: HMM-overlay gross in the low/high-vol tiers.
+        target_vol, vol_window, gross_cap, gross_floor: Vol-target overlay knobs.
+        sector_map, max_sector_frac: Sector-cap selection (as in :func:`make_book_weights`).
+
+    Returns:
+        A stateful ``weight_fn(ts, vol_rank)`` closure (monthly-memoized selection + gross).
+    """
+    from core.asset_rotation import regime_gross_scale, vol_target_scale
+    from core.portfolio import portfolio_target_weights
+
+    cache: dict[tuple[int, int], tuple[list[str], float]] = {}
+
+    def _book_gross(top: list[str], ts: pd.Timestamp, vol_rank: float) -> float:
+        hmm_g = regime_gross_scale(vol_rank, risk_on_gross, risk_off_gross)
+        if overlay == "hmm":
+            return hmm_g
+        vol_g = gross_cap
+        if top:
+            rets = pd.DataFrame(
+                {s: frames[s]["close"].loc[:ts].pct_change() for s in top}
+            ).dropna(how="all")
+            book_ret = rets.tail(vol_window).mean(axis=1).dropna()
+            vol_g = vol_target_scale(
+                book_ret.to_numpy(), target_vol, gross_cap, gross_floor
+            )
+        if overlay == "vol_target":
+            return vol_g
+        if overlay == "both":
+            return min(gross_cap, hmm_g * vol_g)
+        return 1.0  # "none"
+
+    def weight_fn(ts: pd.Timestamp, vol_rank: float) -> dict[str, float]:
+        key = (ts.year, ts.month)
+        memo = cache.get(key)
+        if memo is None:
+            sliced = {s: df.loc[:ts] for s, df in frames.items()}
+            ranked = rank_universe_residual(sliced, market_close.loc[:ts], lookback, skip)
+            top = (select_top_sector_capped(ranked, sector_map, frac, max_sector_frac,
+                                            max_n=max_concurrent)
+                   if sector_map else select_top(ranked, frac))
+            gross = _book_gross(top, ts, vol_rank)
+            cache[key] = (top, gross)
+        else:
+            top, gross = memo
         return portfolio_target_weights(gross, top, max_single, max_concurrent)
 
     return weight_fn
