@@ -53,6 +53,24 @@ cross_sectional:
                                     #   it; the rest fills with next-best momentum elsewhere)
 
 # ---------------------------------------------------------------------------
+# challenger — PARALLEL book (residual momentum + vol-target overlay), GATED
+#   Evidence-backed alternative to the frozen baseline above (Blitz/Chaves iMOM +
+#   Daniel-Moskowitz/Barroso vol-targeting). Runs as a SEPARATE paper book leaving the
+#   baseline untouched (clean control). Knobs FROZEN in
+#   docs/analysis/2026-06-05-idio-momentum-challenger-prereg.md — no sweep. Dry-run via
+#   `main.py --rebalance --challenger`. Directional backtest: run_challenger_eval.py.
+#   Real money BLOCKED until the challenger gate passes (≥12mo forward paper).
+# ---------------------------------------------------------------------------
+challenger:
+  enabled: false                    # off by default; --challenger flag activates the path
+  overlay: vol_target               # none | hmm | vol_target | both (V1 = vol_target)
+  est_window: 504                   # estimation window for the market-model beta/alpha (~24mo)
+  target_vol: 0.12                  # constant annualized vol target (vol_target/both overlay)
+  vol_window: 126                   # trailing bars for the book's realized-vol estimate (~6mo)
+  gross_cap: 1.0                    # max gross after vol-targeting (1.0 = no leverage)
+  gross_floor: 0.0                  # min gross after vol-targeting
+
+# ---------------------------------------------------------------------------
 # hmm — Hidden Markov Model regime detection
 # ---------------------------------------------------------------------------
 hmm:

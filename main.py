@@ -34,6 +34,7 @@ import yaml
 
 STATE_SNAPSHOT = "state_snapshot.json"
 BOOK_SNAPSHOT = "book_snapshot.json"
+BOOK_SNAPSHOT_CHALLENGER = "book_snapshot_challenger.json"
 TRACK_RECORD_CSV = "track_record.csv"
 MODEL_DIR = "models"
 HMM_MAX_AGE_DAYS = 7
@@ -1114,7 +1115,8 @@ def run_once(config: dict[str, Any], credentials: dict[str, str],
 
 def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
                   dry_run: bool = True,
-                  universe_limit: Optional[int] = None) -> list[dict]:  # pragma: no cover - live broker/market
+                  universe_limit: Optional[int] = None,
+                  challenger: bool = False) -> list[dict]:  # pragma: no cover - live broker/market
     """Compute (and, when un-gated, submit) the cross-sectional book rebalance (vía C).
 
     The monthly paper entry point for the cross-sectional return-predictor book: load
@@ -1146,6 +1148,7 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
     from broker.alpaca_client import AlpacaClient, AlpacaConfig
     from broker.order_executor import OrderExecutor
     from core.cross_sectional_ranking import (compute_book_targets,
+                                              compute_book_targets_challenger,
                                               drop_open_order_symbols,
                                               plan_rebalance_orders, targets_to_orders)
     from core.hmm_engine import HMMEngine
@@ -1186,14 +1189,30 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
         universe = universe[:universe_limit]
     frames = md.get_history_multi(universe, config.get("broker", {}).get("timeframe", "1Day"),
                                   lookback + skip + 10)
-    targets = compute_book_targets(
-        frames, vol_rank, lookback=lookback, skip=skip, frac=frac,
-        max_single=max_single, max_concurrent=max_concurrent,
-        risk_on_gross=float(cs.get("risk_on_gross", 1.0)),
-        risk_off_gross=float(cs.get("risk_off_gross", 0.5)),
-        sector_map=load_sector_map(),
-        max_sector_frac=float(cs.get("max_sector_fraction", 0.30)),
-    )
+    if challenger:
+        ch = config.get("challenger", {})
+        targets = compute_book_targets_challenger(
+            frames, proxy_hist["close"], vol_rank, lookback=lookback, skip=skip, frac=frac,
+            max_single=max_single, max_concurrent=max_concurrent,
+            overlay=str(ch.get("overlay", "vol_target")),
+            risk_on_gross=float(cs.get("risk_on_gross", 1.0)),
+            risk_off_gross=float(cs.get("risk_off_gross", 0.5)),
+            target_vol=float(ch.get("target_vol", 0.12)),
+            vol_window=int(ch.get("vol_window", 126)),
+            gross_cap=float(ch.get("gross_cap", 1.0)),
+            gross_floor=float(ch.get("gross_floor", 0.0)),
+            sector_map=load_sector_map(),
+            max_sector_frac=float(cs.get("max_sector_fraction", 0.30)),
+        )
+    else:
+        targets = compute_book_targets(
+            frames, vol_rank, lookback=lookback, skip=skip, frac=frac,
+            max_single=max_single, max_concurrent=max_concurrent,
+            risk_on_gross=float(cs.get("risk_on_gross", 1.0)),
+            risk_off_gross=float(cs.get("risk_off_gross", 0.5)),
+            sector_map=load_sector_map(),
+            max_sector_frac=float(cs.get("max_sector_fraction", 0.30)),
+        )
     prices = {s: float(frames[s]["close"].iloc[-1]) for s in targets if s in frames}
     plan = targets_to_orders(targets, equity, prices)
 
@@ -1231,6 +1250,7 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
     # Persist the book snapshot for the dashboard (dry-run writes it too).
     snapshot = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "book": "challenger" if challenger else "baseline",
         "mode": "PAPER" if paper else "LIVE",
         "dry_run": dry_run,
         "vol_rank": vol_rank,
@@ -1241,8 +1261,9 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
         "held": [{"symbol": s, "shares": q} for s, q in sorted(held.items())],
         "executed": executed,
     }
-    Path(BOOK_SNAPSHOT).write_text(json.dumps(snapshot, indent=2, default=str))
-    tlog.log(tlog.main, "book_snapshot", f"wrote {BOOK_SNAPSHOT}")
+    snap_path = BOOK_SNAPSHOT_CHALLENGER if challenger else BOOK_SNAPSHOT
+    Path(snap_path).write_text(json.dumps(snapshot, indent=2, default=str))
+    tlog.log(tlog.main, "book_snapshot", f"wrote {snap_path}")
     return plan
 
 
@@ -1431,6 +1452,10 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
                         help="with --rebalance: actually submit the paper orders (default dry-run)")
     parser.add_argument("--limit", type=int, default=None,
                         help="with --rebalance: cap universe size (small-N safe testing)")
+    parser.add_argument("--challenger", action="store_true",
+                        help="with --rebalance: run the residual-momentum + vol-target "
+                             "challenger book (parallel to the frozen baseline; GATED, "
+                             "writes a separate snapshot)")
 
     parser.add_argument("--compare", action="store_true", help="add benchmark comparison (backtest)")
     parser.add_argument("--symbols", nargs="+", default=None,
@@ -1464,7 +1489,7 @@ def main(argv: Optional[list[str]] = None) -> None:
         run_once(config, load_credentials())
     elif args.rebalance:
         run_rebalance(config, load_credentials(), dry_run=not args.execute,
-                      universe_limit=args.limit)
+                      universe_limit=args.limit, challenger=args.challenger)
     elif args.record_track:
         run_record_track(config, load_credentials())
     else:  # default: live

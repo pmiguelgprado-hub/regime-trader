@@ -21,6 +21,7 @@ import pytest
 
 from backtest.performance import pbo_cscv
 from core.cross_sectional_ranking import (
+    compute_book_targets_challenger,
     make_book_weights_challenger,
     rank_universe_residual,
     residual_momentum_score,
@@ -128,6 +129,21 @@ def test_challenger_hmm_overlay_matches_baseline_scale() -> None:
     ts = list(frames.values())[0].index[-1]
     w = wf(ts, vol_rank=0.9)                             # high-vol tier -> risk_off
     assert sum(w.values()) == pytest.approx(regime_gross_scale(0.9, 1.0, 0.5), abs=1e-9)
+
+
+def test_compute_book_targets_challenger_overlay_modes() -> None:
+    """The live one-shot picks top names by residual momentum and applies the overlay."""
+    frames, mkt = _toy_universe()
+    t_none = compute_book_targets_challenger(
+        frames, mkt, vol_rank=0.1, frac=0.5, max_concurrent=3, max_single=1.0, overlay="none",
+    )
+    assert len(t_none) == 3
+    assert sum(t_none.values()) == pytest.approx(1.0)
+    t_hmm = compute_book_targets_challenger(
+        frames, mkt, vol_rank=0.9, frac=0.5, max_concurrent=3, max_single=1.0,
+        overlay="hmm", risk_off_gross=0.5,
+    )
+    assert sum(t_hmm.values()) == pytest.approx(0.5)     # high-vol tier de-risks to 0.5
 
 
 # ----------------------------------------------------------------- PBO ---

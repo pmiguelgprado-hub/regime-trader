@@ -467,6 +467,67 @@ def compute_book_targets(
     return portfolio_target_weights(gross, top, max_single, max_concurrent)
 
 
+def compute_book_targets_challenger(
+    frames: dict[str, pd.DataFrame],
+    market_close: pd.Series,
+    vol_rank: float,
+    lookback: int = DEFAULT_LOOKBACK,
+    skip: int = DEFAULT_SKIP,
+    frac: float = TOP_DECILE,
+    max_single: float = 0.15,
+    max_concurrent: int = 50,
+    overlay: str = "vol_target",
+    risk_on_gross: float = 1.0,
+    risk_off_gross: float = 0.5,
+    target_vol: float = 0.12,
+    vol_window: int = 126,
+    gross_cap: float = 1.0,
+    gross_floor: float = 0.0,
+    sector_map: dict[str, str] | None = None,
+    max_sector_frac: float = 0.30,
+) -> dict[str, float]:
+    """One-shot **challenger** target weights for the live/paper rebalance.
+
+    The live counterpart of :func:`make_book_weights_challenger` (as
+    :func:`compute_book_targets` is to :func:`make_book_weights`): rank the universe by
+    residual momentum against ``market_close``, take the top decile (sector-capped), set
+    gross by the chosen ``overlay`` mode, and equal-weight under the caps. Pure (no
+    network) so the rebalance decision is unit-testable; ``main.run_rebalance --challenger``
+    wraps it with live data + (gated) submission.
+
+    Args:
+        frames: ``{symbol: OHLCV}`` ending at the latest closed bar.
+        market_close: Market-proxy close series for the residual regression.
+        vol_rank: Current market regime volatility rank in ``[0, 1]`` (HMM on the proxy).
+        overlay: Gross-overlay mode (``none`` | ``hmm`` | ``vol_target`` | ``both``).
+        Other args: as in :func:`make_book_weights_challenger`.
+
+    Returns:
+        ``{symbol: target_weight}`` for the selected top-decile names.
+    """
+    from core.asset_rotation import regime_gross_scale, vol_target_scale
+    from core.portfolio import portfolio_target_weights
+
+    ranked = rank_universe_residual(frames, market_close, lookback, skip)
+    top = (select_top_sector_capped(ranked, sector_map, frac, max_sector_frac,
+                                    max_n=max_concurrent)
+           if sector_map else select_top(ranked, frac))
+
+    hmm_g = regime_gross_scale(vol_rank, risk_on_gross, risk_off_gross)
+    vol_g = gross_cap
+    if top and overlay in ("vol_target", "both"):
+        rets = pd.DataFrame({s: frames[s]["close"].pct_change() for s in top}).dropna(how="all")
+        book_ret = rets.tail(vol_window).mean(axis=1).dropna()
+        vol_g = vol_target_scale(book_ret.to_numpy(), target_vol, gross_cap, gross_floor)
+    gross = {
+        "none": 1.0,
+        "hmm": hmm_g,
+        "vol_target": vol_g,
+        "both": min(gross_cap, hmm_g * vol_g),
+    }.get(overlay, 1.0)
+    return portfolio_target_weights(gross, top, max_single, max_concurrent)
+
+
 def targets_to_orders(
     targets: dict[str, float],
     equity: float,
