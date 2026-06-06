@@ -174,6 +174,7 @@ def rank_universe_residual(
     market_close: pd.Series,
     lookback: int = DEFAULT_LOOKBACK,
     skip: int = DEFAULT_SKIP,
+    est_window: int = DEFAULT_EST_WINDOW,
 ) -> list[str]:
     """Rank a universe by descending **residual** (idiosyncratic) momentum.
 
@@ -192,7 +193,7 @@ def rank_universe_residual(
     """
     scored: list[tuple[str, float]] = []
     for sym, df in frames.items():
-        score = residual_momentum_score(df["close"], market_close, lookback, skip)
+        score = residual_momentum_score(df["close"], market_close, lookback, skip, est_window)
         if score == score:   # not nan
             scored.append((sym, score))
     scored.sort(key=lambda kv: (-kv[1], kv[0]))
@@ -334,6 +335,7 @@ def make_book_weights_challenger(
     market_close: pd.Series,
     lookback: int = DEFAULT_LOOKBACK,
     skip: int = DEFAULT_SKIP,
+    est_window: int = DEFAULT_EST_WINDOW,
     frac: float = TOP_DECILE,
     max_single: float = 0.15,
     max_concurrent: int = 50,
@@ -412,7 +414,8 @@ def make_book_weights_challenger(
         memo = cache.get(key)
         if memo is None:
             sliced = {s: df.loc[:ts] for s, df in frames.items()}
-            ranked = rank_universe_residual(sliced, market_close.loc[:ts], lookback, skip)
+            ranked = rank_universe_residual(sliced, market_close.loc[:ts], lookback, skip,
+                                            est_window)
             top = (select_top_sector_capped(ranked, sector_map, frac, max_sector_frac,
                                             max_n=max_concurrent)
                    if sector_map else select_top(ranked, frac))
@@ -473,6 +476,7 @@ def compute_book_targets_challenger(
     vol_rank: float,
     lookback: int = DEFAULT_LOOKBACK,
     skip: int = DEFAULT_SKIP,
+    est_window: int = DEFAULT_EST_WINDOW,
     frac: float = TOP_DECILE,
     max_single: float = 0.15,
     max_concurrent: int = 50,
@@ -508,7 +512,7 @@ def compute_book_targets_challenger(
     from core.asset_rotation import regime_gross_scale, vol_target_scale
     from core.portfolio import portfolio_target_weights
 
-    ranked = rank_universe_residual(frames, market_close, lookback, skip)
+    ranked = rank_universe_residual(frames, market_close, lookback, skip, est_window)
     top = (select_top_sector_capped(ranked, sector_map, frac, max_sector_frac,
                                     max_n=max_concurrent)
            if sector_map else select_top(ranked, frac))

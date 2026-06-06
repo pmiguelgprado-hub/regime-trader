@@ -1187,12 +1187,19 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
     universe = load_sp500()
     if universe_limit:                                  # safe-test override (small universe)
         universe = universe[:universe_limit]
+    # The challenger's residual signal estimates beta over a long est_window (504) BEFORE
+    # scoring the recent 12-1 sub-window, so it needs a deeper fetch than the baseline's
+    # lookback+skip — otherwise residual_momentum_score silently fits on too few bars and
+    # the live signal != the validated one.
+    est_window = int(config.get("challenger", {}).get("est_window", 504))
+    hist_depth = (max(lookback + skip, est_window) + 60) if challenger else (lookback + skip + 10)
     frames = md.get_history_multi(universe, config.get("broker", {}).get("timeframe", "1Day"),
-                                  lookback + skip + 10)
+                                  hist_depth)
     if challenger:
         ch = config.get("challenger", {})
         targets = compute_book_targets_challenger(
-            frames, proxy_hist["close"], vol_rank, lookback=lookback, skip=skip, frac=frac,
+            frames, proxy_hist["close"], vol_rank, lookback=lookback, skip=skip,
+            est_window=est_window, frac=frac,
             max_single=max_single, max_concurrent=max_concurrent,
             overlay=str(ch.get("overlay", "vol_target")),
             risk_on_gross=float(cs.get("risk_on_gross", 1.0)),
