@@ -45,6 +45,7 @@ data/cache/
 # runtime state written by the live loop / peak-DD circuit-breaker lock
 state_snapshot.json
 book_snapshot.json
+book_snapshot_challenger.json
 trading_halted.lock
 # accumulating daily NAV series (book/EW-S&P500/SPY) — persists on disk, not in git
 track_record.csv
