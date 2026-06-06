@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  regime-trader CHALLENGER book monthly rebalance (residual momentum + vol-target).
+  Runs `main.py --rebalance --challenger` on the 1st of each month, ~22:35 CEST
+  (5 min after the baseline rebalance) and writes book_snapshot_challenger.json.
+
+  DRY-RUN ONLY (no --execute) on purpose. The frozen BASELINE book already owns the
+  shared paper account; both books submitting would fight over positions (each
+  rebalance liquidates any held name not in its own target). A true *parallel*
+  forward test — baseline and challenger both executing and measured side by side —
+  requires the challenger to trade a SEPARATE Alpaca paper account (its own keys).
+  That is Pablo's gated step:
+    1. create a second Alpaca paper account, put its keys in a separate credentials file
+    2. point a challenger-specific run at those keys
+    3. add --execute here + a challenger track recorder
+  Until then this scheduler only snapshots the challenger plan (≈ buy-and-hold of the
+  residual-momentum decile, NOT the monthly-rebalanced book — same caveat as the
+  baseline's dry-run history). PAPER only; real money BLOCKED until the challenger
+  gate passes (docs/analysis/2026-06-05-idio-momentum-challenger-prereg.md).
+
+  Install:
+    cp deploy/com.regimetrader.challenger.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.regimetrader.challenger.plist
+  Stop:
+    launchctl unload ~/Library/LaunchAgents/com.regimetrader.challenger.plist
+
+  NOT loaded by this session.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.regimetrader.challenger</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/pablomiguelgonzalezprado/AIOS/projects/regime-trader/.venv/bin/python</string>
+    <string>main.py</string>
+    <string>--rebalance</string>
+    <string>--challenger</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/pablomiguelgonzalezprado/AIOS/projects/regime-trader</string>
+
+  <!-- 1st of each month at 22:35 local time (just after the baseline rebalance). -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Day</key><integer>1</integer>
+    <key>Hour</key><integer>22</integer>
+    <key>Minute</key><integer>35</integer>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/pablomiguelgonzalezprado/AIOS/projects/regime-trader/logs/challenger.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/pablomiguelgonzalezprado/AIOS/projects/regime-trader/logs/challenger.err.log</string>
+</dict>
+</plist>

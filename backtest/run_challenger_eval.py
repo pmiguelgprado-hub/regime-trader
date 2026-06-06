@@ -133,14 +133,23 @@ def main() -> None:
         results[label] = eq
         oos_idx = eq.index
 
-    # benchmarks on the same OOS index, same cost convention
-    spy_oos = spy["close"].reindex(oos_idx).ffill()
-    results["SPY_hold"] = bt.config.initial_capital * (spy_oos / spy_oos.iloc[0])
-    ew_ret = (
-        pd.DataFrame({s: cons[s]["close"].pct_change() for s in cons})
-        .reindex(oos_idx).mean(axis=1).fillna(0.0)
+    # benchmarks on the same OOS index, through the SAME cost engine as the strategies
+    # (matched slippage on turnover + rf credit on idle cash). A frictionless benchmark
+    # would rig the comparison — the exact confound benchmarks.py warns about (it flipped a
+    # prior validation 0/5 -> 1/5). EW is daily-reconstituted so it DOES pay turnover cost.
+    from backtest.benchmarks import simulate_portfolio
+
+    rf_daily = (bt.config.risk_free_rate / PERIODS_PER_YEAR) if bt.config.credit_cash_rf else 0.0
+    cap = bt.config.initial_capital
+    names = list(cons)
+    ew_w = {s: 1.0 / len(names) for s in names}
+    results["EW_universe"] = simulate_portfolio(
+        cons, oos_idx, lambda t, hist: ew_w, bt.config.slippage_pct, rf_daily, cap,
     )
-    results["EW_universe"] = bt.config.initial_capital * (1.0 + ew_ret).cumprod()
+    results["SPY_hold"] = simulate_portfolio(
+        {PROXY: spy}, oos_idx, lambda t, hist: {PROXY: 1.0},
+        bt.config.slippage_pct, rf_daily, cap,
+    )
 
     # ---- metrics ----
     strat_labels = list(variants)
