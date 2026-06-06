@@ -21,11 +21,13 @@ related: ["[[2026-06-05-challenger-directional-results]]", "[[2026-06-04-cross-s
   universo completo; ver §3). `momentum_score` / `rank_universe`.
 - **Overlay de riesgo = `crash_only`** (Daniel-Moskowitz dynamic, vía `_overlay_gross`):
   full gross en vol baja/media (captura el upside), de-riesga **solo en el tier superior de
-  pánico**. Es el punto que **sube el Sharpe SIN tanto drawdown** (objetivo literal de
-  Pablo): eval N=200 → Sharpe **0.93** (empata el máximo sin overlay) pero maxDD **-30%** vs
-  -40% de `none`; y bate al overlay `hmm` en Sharpe (0.87) **y** return (475%→623%). Los
-  pesos inverse-vol NO ayudaron (Sharpe 0.79) y combinar overlays de-riesga de más → no se
-  usan. Sigue atento a diario (régimen recalculado cada día hábil).
+  pánico**. Es el punto de **máximo Sharpe con el menor drawdown A ESE nivel de Sharpe**:
+  eval N=200 → Sharpe **0.93** (empata el máximo sin overlay) con maxDD **-30%** vs -40% de
+  `none`. **OJO — no es "más Sharpe sin drawdown" en absoluto: vs el overlay `hmm` que estaba
+  (0.87/-26.6%), crash_only sube Sharpe +0.06 PERO sube el drawdown +3.6 pts. No hay free
+  lunch — recortar drawdown exige devolver Sharpe (`vol_target`/`both`).** Elegido porque la
+  prioridad consistente de Pablo es maximizar return+Sharpe. inverse-vol NO ayudó (0.79);
+  combinar overlays de-riesga de más → no se usan. Atento a diario (régimen recalculado L-V).
 - **Cadencia diaria, dos escalas de tiempo** (lo que hace al bot "atento en todo momento"
   sin desvirtuar una señal lenta):
   - **Selección**: re-rankeo del momentum **solo en el primer run de cada mes nuevo**.
@@ -93,3 +95,12 @@ Backtest sesgado, no es prueba de edge. 3/3 avenidas previas del proyecto falsad
 raw_none gana Sharpe+retorno en el backtest pero con -40% de drawdown (peor que el índice);
 el vol-target sacrifica algo de Sharpe por un drawdown muy inferior — esa es la apuesta de
 "equilibrio". El edge real se desconoce hasta ≥12 meses de paper.
+
+**PBO = 0.52 en el eval de 11 variantes — FALLA el propio umbral del gate (<0.5).** Significa
+que el ranking entre estos overlays casi-empatados es ruido: el backtest NO valida
+"crash_only es el ganador". crash_only se despliega como **elección a-priori razonada**
+(teoría Daniel-Moskowitz sólida, empata el Sharpe máximo), NO como config validada por
+backtest. **CONFIG CONGELADA AQUÍ:** el overlay se cambió 3× esta sesión (vol_target→hmm→
+crash_only) persiguiendo números de backtest sesgado — eso es exactamente el forking-paths
+que el proyecto evita. Se fija crash_only y **el forward paper ≥12mo es lo único que
+adjudica de ahora en adelante**; no más cambios de overlay por backtest.
