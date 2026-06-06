@@ -21,6 +21,8 @@ import pytest
 
 from backtest.performance import pbo_cscv
 from core.cross_sectional_ranking import (
+    _overlay_gross,
+    _weight_names,
     book_targets_fixed_selection,
     compute_book_targets_challenger,
     make_book_weights_challenger,
@@ -160,6 +162,27 @@ def test_fixed_selection_keeps_names_and_rescales_gross() -> None:
                                             max_single=1.0, max_concurrent=10)
     assert sum(derisked.values()) < 1.0              # vol-target cuts gross, same names
     assert set(derisked) <= {"S0", "S1", "S2"}
+
+
+def test_crash_only_overlay_full_until_panic_tier() -> None:
+    """crash_only stays full in low/mid vol, de-risks only in the top (panic) tier."""
+    args = (0.12, 126, 1.0, 0.0)
+    assert _overlay_gross([], {}, None, 0.30, "crash_only", 1.0, 0.4, *args) == 1.0
+    assert _overlay_gross([], {}, None, 0.60, "crash_only", 1.0, 0.4, *args) == 1.0
+    assert _overlay_gross([], {}, None, 0.90, "crash_only", 1.0, 0.4, *args) == 0.4
+
+
+def test_inv_vol_weighting_underweights_the_wilder_name() -> None:
+    """Risk-parity-lite: the higher-vol name gets a smaller slice than the calm one."""
+    rng = np.random.default_rng(5)
+    frames = {
+        "CALM": pd.DataFrame({"close": _prices_from_returns(rng.normal(0, 0.005, 300))}),
+        "WILD": pd.DataFrame({"close": _prices_from_returns(rng.normal(0, 0.03, 300))}),
+    }
+    w = _weight_names(1.0, ["CALM", "WILD"], frames, None, "inv_vol",
+                      max_single=1.0, max_concurrent=10)
+    assert w["CALM"] > w["WILD"]
+    assert sum(w.values()) == pytest.approx(1.0, abs=1e-9)
 
 
 # ----------------------------------------------------------------- PBO ---

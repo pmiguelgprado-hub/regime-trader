@@ -112,6 +112,11 @@ def main() -> None:
             cons, overlay="vol_target", target_vol=0.12, **common,
         ),
         "raw_both": make_book_weights(cons, overlay="both", target_vol=0.12, **common),
+        "raw_crashonly": make_book_weights(cons, overlay="crash_only", **common),
+        "raw_invvol": make_book_weights(cons, overlay="hmm", weighting="inv_vol", **common),
+        "raw_crash_invvol": make_book_weights(
+            cons, overlay="crash_only", weighting="inv_vol", **common,
+        ),
         "resid_none": make_book_weights_challenger(
             cons, market_close, overlay="none", **common,
         ),

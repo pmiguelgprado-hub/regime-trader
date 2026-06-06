@@ -1225,6 +1225,7 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
             risk_on_gross=float(cs.get("risk_on_gross", 1.0)),
             risk_off_gross=float(cs.get("risk_off_gross", 0.5)),
             target_vol=tv, vol_window=vw, gross_cap=gc, gross_floor=gf,
+            weighting=str(cs.get("weighting", "equal")),
             max_single=max_single, max_concurrent=max_concurrent,
         )
         selected_symbols = prior_sel
@@ -1255,11 +1256,26 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
             vol_window=int(cs.get("vol_window", 126)),
             gross_cap=float(cs.get("gross_cap", 1.0)),
             gross_floor=float(cs.get("gross_floor", 0.0)),
+            weighting=str(cs.get("weighting", "equal")),
             sector_map=load_sector_map(),
             max_sector_frac=float(cs.get("max_sector_fraction", 0.30)),
         )
     if not reuse_selection:
         selected_symbols = list(targets)
+
+    # Macro-event risk overlay (opt-in, risk timing not alpha): trim gross in the window
+    # before a scheduled high-vol US event (FOMC/payrolls). Default off (event_derisk 0/1).
+    ev_derisk = float(cs.get("event_derisk", 0.0) or 0.0)
+    if 0.0 < ev_derisk < 1.0:
+        from core.macro_calendar import event_risk_scale, in_event_window
+        ev_win = int(cs.get("event_window_days", 2))
+        ev_scale = event_risk_scale(datetime.now(timezone.utc).date(), ev_win, ev_derisk)
+        if ev_scale < 1.0:
+            flagged, ev_label = in_event_window(datetime.now(timezone.utc).date(), ev_win)
+            targets = {s: w * ev_scale for s, w in targets.items()}
+            tlog.log(tlog.main, "event_derisk",
+                     f"{ev_label} within {ev_win}d -> gross x{ev_scale:.2f}")
+
     prices = {s: float(frames[s]["close"].iloc[-1]) for s in targets if s in frames}
     plan = targets_to_orders(targets, equity, prices)
 

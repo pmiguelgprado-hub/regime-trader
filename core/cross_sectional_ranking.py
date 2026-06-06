@@ -302,6 +302,12 @@ def _overlay_gross(
         return 1.0
     if overlay == "hmm":
         return hmm_g
+    if overlay == "crash_only":
+        # Daniel-Moskowitz dynamic: stay FULL in low/mid vol (keep the upside), de-risk
+        # ONLY in the top (panic) vol tier — surgical tail-cut instead of the hmm mid-band
+        # interpolation that also trims good upside.
+        from core.regime_strategies import HIGH_VOL_MIN
+        return risk_off_gross if vol_rank >= HIGH_VOL_MIN else 1.0
     vol_g = gross_cap
     if top:
         rets = pd.DataFrame(
@@ -324,6 +330,43 @@ def _resolve_overlay(overlay: "str | None", use_overlay: bool) -> str:
     return "hmm" if use_overlay else "none"
 
 
+def _weight_names(
+    gross: float,
+    names: list[str],
+    frames: dict[str, pd.DataFrame],
+    ts: "pd.Timestamp | None",
+    weighting: str,
+    max_single: float,
+    max_concurrent: int,
+    vol_lookback: int = 63,
+) -> dict[str, float]:
+    """Split the gross budget across names by the chosen weighting scheme.
+
+    ``"equal"`` defers to :func:`~core.portfolio.portfolio_target_weights`. ``"inv_vol"``
+    (risk-parity-lite) weights each name by ``1 / realized_vol`` over the trailing
+    ``vol_lookback`` bars (sliced causally to ``ts``), so the wildest names get a smaller
+    slice — less concentration in a few high-vol movers, which tightens the Sharpe and
+    shaves the drawdown. Per-name weights are capped at ``max_single``.
+    """
+    from core.portfolio import portfolio_target_weights
+
+    if weighting != "inv_vol":
+        return portfolio_target_weights(gross, names, max_single, max_concurrent)
+    sel = names[:max_concurrent]
+    if not sel or gross <= 0.0:
+        return {}
+    inv: dict[str, float] = {}
+    for s in sel:
+        close = frames[s]["close"].loc[:ts] if ts is not None else frames[s]["close"]
+        r = close.pct_change().tail(vol_lookback).dropna()
+        v = float(r.std(ddof=1)) if len(r) > 5 else 0.0
+        inv[s] = (1.0 / v) if v > 0.0 else 0.0
+    tot = sum(inv.values())
+    if tot <= 0.0:
+        return portfolio_target_weights(gross, names, max_single, max_concurrent)
+    return {s: min(gross * inv[s] / tot, max_single) for s in sel}
+
+
 def make_book_weights(
     frames: dict[str, pd.DataFrame],
     lookback: int = DEFAULT_LOOKBACK,
@@ -339,6 +382,7 @@ def make_book_weights(
     vol_window: int = 126,
     gross_cap: float = 1.0,
     gross_floor: float = 0.0,
+    weighting: str = "equal",
     sector_map: dict[str, str] | None = None,
     max_sector_frac: float = 0.30,
 ) -> Callable[[pd.Timestamp, float], dict[str, float]]:
@@ -386,7 +430,7 @@ def make_book_weights(
             cache[key] = top
         gross = _overlay_gross(top, frames, ts, vol_rank, mode, risk_on_gross,
                                risk_off_gross, target_vol, vol_window, gross_cap, gross_floor)
-        return portfolio_target_weights(gross, top, max_single, max_concurrent)
+        return _weight_names(gross, top, frames, ts, weighting, max_single, max_concurrent)
 
     return weight_fn
 
@@ -486,6 +530,7 @@ def compute_book_targets(
     vol_window: int = 126,
     gross_cap: float = 1.0,
     gross_floor: float = 0.0,
+    weighting: str = "equal",
     sector_map: dict[str, str] | None = None,
     max_sector_frac: float = 0.30,
 ) -> dict[str, float]:
@@ -515,7 +560,7 @@ def compute_book_targets(
     mode = _resolve_overlay(overlay, use_overlay)
     gross = _overlay_gross(top, frames, None, vol_rank, mode, risk_on_gross,
                            risk_off_gross, target_vol, vol_window, gross_cap, gross_floor)
-    return portfolio_target_weights(gross, top, max_single, max_concurrent)
+    return _weight_names(gross, top, frames, None, weighting, max_single, max_concurrent)
 
 
 def compute_book_targets_challenger(
@@ -579,6 +624,7 @@ def book_targets_fixed_selection(
     vol_window: int = 126,
     gross_cap: float = 1.0,
     gross_floor: float = 0.0,
+    weighting: str = "equal",
     max_single: float = 0.15,
     max_concurrent: int = 50,
 ) -> dict[str, float]:
@@ -607,7 +653,7 @@ def book_targets_fixed_selection(
     present = [s for s in selected if s in frames]
     gross = _overlay_gross(present, frames, None, vol_rank, overlay, risk_on_gross,
                            risk_off_gross, target_vol, vol_window, gross_cap, gross_floor)
-    return portfolio_target_weights(gross, present, max_single, max_concurrent)
+    return _weight_names(gross, present, frames, None, weighting, max_single, max_concurrent)
 
 
 def targets_to_orders(

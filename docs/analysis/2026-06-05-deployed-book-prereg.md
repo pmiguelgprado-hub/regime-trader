@@ -6,7 +6,7 @@ created: 2026-06-05
 related: ["[[2026-06-05-challenger-directional-results]]", "[[2026-06-04-cross-sectional-prereg]]", "[[2026-06-05-idio-momentum-challenger-prereg]]"]
 ---
 
-# Pre-registro CONGELADO — Libro DESPLEGADO: raw momentum + overlay HMM, cadencia diaria
+# Pre-registro CONGELADO — Libro DESPLEGADO: raw momentum + overlay crash_only, cadencia diaria
 
 > **Decisión de Pablo (2026-06-05): desplegar la mejor opción en la cuenta Alpaca paper
 > ACTUAL (sin segunda cuenta), con movimientos diarios y el bot atento en todo momento.**
@@ -19,13 +19,13 @@ related: ["[[2026-06-05-challenger-directional-results]]", "[[2026-06-04-cross-s
 - **Alfa = momentum 12-1 crudo** (Jegadeesh-Titman). Ganó retorno **y** Sharpe en el eval
   direccional y es robusto a cualquier tamaño de universo (el residual necesita el
   universo completo; ver §3). `momentum_score` / `rank_universe`.
-- **Overlay de riesgo = HMM regime** (`regime_gross_scale` vía `_overlay_gross`): escala el
-  gross por el régimen de volatilidad (full en risk-on, ~50% en risk-off). Elegido porque
-  el objetivo de Pablo es **maximizar return + Sharpe** con control de riesgo, y `hmm` es el
-  punto de la frontera que lo hace (Sharpe 0.87 ≈ el máximo sin overlay 0.93, maxDD -27% vs
-  -40%). Combinar overlays ("both") de-riesga el doble → MENOR return+Sharpe (no es el
-  objetivo). El vol-target queda disponible como `overlay: vol_target` (1 línea) si se
-  prioriza drawdown. Sigue atento a diario: el régimen HMM se recalcula cada día hábil.
+- **Overlay de riesgo = `crash_only`** (Daniel-Moskowitz dynamic, vía `_overlay_gross`):
+  full gross en vol baja/media (captura el upside), de-riesga **solo en el tier superior de
+  pánico**. Es el punto que **sube el Sharpe SIN tanto drawdown** (objetivo literal de
+  Pablo): eval N=200 → Sharpe **0.93** (empata el máximo sin overlay) pero maxDD **-30%** vs
+  -40% de `none`; y bate al overlay `hmm` en Sharpe (0.87) **y** return (475%→623%). Los
+  pesos inverse-vol NO ayudaron (Sharpe 0.79) y combinar overlays de-riesga de más → no se
+  usan. Sigue atento a diario (régimen recalculado cada día hábil).
 - **Cadencia diaria, dos escalas de tiempo** (lo que hace al bot "atento en todo momento"
   sin desvirtuar una señal lenta):
   - **Selección**: re-rankeo del momentum **solo en el primer run de cada mes nuevo**.
@@ -39,24 +39,25 @@ Frontera Sharpe↔drawdown sobre el momentum crudo (PBO 0.26 = el ranking genera
 
 | variante | ret. total | Sharpe | maxDD |
 |---|---:|---:|---:|
-| raw_none (sin overlay) | 814.6% | **0.93** | -39.9% |
-| **raw_hmm (DESPLEGADO)** | 475.2% | **0.87** | -26.6% |
+| raw_none (sin overlay) | 814.6% | 0.93 | -39.9% |
+| **raw_crashonly (DESPLEGADO)** | 623.1% | **0.93** | **-30.2%** |
+| raw_hmm | 475.2% | 0.87 | -26.6% |
+| raw_crash_invvol (las dos) | 433.3% | 0.85 | -25.8% |
+| raw_invvol (solo pesos) | 341.3% | 0.79 | -24.1% |
 | raw_vol_target | 253.6% | 0.82 | -22.6% |
-| raw_both (hmm × vol) | 179.0% | 0.75 | **-15.9%** |
+| raw_both | 179.0% | 0.75 | -15.9% |
 | SPY | 229.9% | 0.59 | -33.7% |
 | EW-S&P500 | 265.8% | 0.66 | -35.8% |
 
-Los overlays cambian Sharpe por drawdown de forma **monótona**: menos overlay = más
-return+Sharpe pero más drawdown. **Combinar hmm+vol_target ("both") de-riesga el doble →
-el MENOR return+Sharpe** (0.75/179%), no el mayor — error común. Objetivo de Pablo =
-maximizar return+Sharpe **con** control de riesgo → `hmm` es el punto óptimo: Sharpe 0.87
-(≈ el máximo sin overlay 0.93), maxDD -26.6% (muy por debajo del -40% de `none`), bate
-SPY/EW en Sharpe **y** drawdown. **Trade-off: vs `none` cuesta 0.06 de Sharpe y compra
-13 pts de drawdown (-40%→-27%).**
+**`crash_only` mueve la frontera, no la desliza:** mismo Sharpe que el máximo sin overlay
+(0.93) pero -30% de drawdown en vez de -40% (corta 10 pts de cola SIN perder Sharpe), porque
+de-riesga solo el tier de pánico y conserva el upside de vol baja/media. Vs `hmm` (lo que
+estaba): +0.06 Sharpe, +148 pts de return, -3.6 pts de drawdown. **Inverse-vol NO ayudó**
+(Sharpe 0.79 < hmm) y **combinar (crash+inv_vol) salió peor** que crash_only solo (0.85) — el
+inv_vol arrastra. Lección repetida: más capas ≠ mejor.
 
-**Cambiar de overlay = una línea** (`config/settings.yaml::cross_sectional.overlay`):
-`none` (máx Sharpe/retorno, máx DD) · `hmm` (desplegado) · `vol_target` (menos DD, menos
-return) · `both` (mín DD, mín return).
+**Cambiar de overlay/pesos = una línea** (`config/settings.yaml::cross_sectional`):
+`overlay` ∈ none·hmm·**crash_only**·vol_target·both ; `weighting` ∈ equal·inv_vol.
 
 ## 2. Knobs CONGELADOS (sin barrido)
 
@@ -64,7 +65,9 @@ return) · `both` (mín DD, mín return).
 |---|---|
 | Señal | momentum 12-1 (lookback 252, skip 21) |
 | Selección | top decil (0.10), equal-weight, sector-cap 0.30, max_concurrent 50, max_single 0.15 |
-| Overlay | `hmm` (risk_on_gross 1.0, risk_off_gross 0.5); vol-target knobs quedan en config para el cambio de 1 línea |
+| Overlay | `crash_only` (full salvo tier de pánico → risk_off_gross 0.5); otros overlays quedan en config (cambio 1 línea) |
+| Pesos | equal-weight (inv_vol disponible pero no usado: bajó el Sharpe) |
+| Evento macro | `event_derisk` opt-in (default off): de-riesga N días antes de FOMC/payrolls — `core/macro_calendar.py` |
 | Cadencia | diaria L-V; re-rank selección 1er run de cada mes; re-escala gross diario |
 | Costes | slippage por turnover + `credit_cash_rf` |
 

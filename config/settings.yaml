@@ -48,18 +48,26 @@ cross_sectional:
   max_concurrent: 50                # max names held (≈top decile of ~500)
   risk_on_gross: 1.0                # gross exposure in the low-vol regime (overlay=hmm)
   risk_off_gross: 0.5               # gross exposure in the high-vol regime (overlay=hmm)
-  # DEPLOYED book risk overlay (Pablo, 2026-06-05): raw momentum alpha + HMM regime
-  # overlay. Pablo's goal = MAXIMIZE return + Sharpe with risk control; hmm is the
-  # frontier point that does that (Sharpe 0.87 ≈ the no-overlay max 0.93, but maxDD -27%
-  # vs -40%). Overlays trade Sharpe for drawdown MONOTONICALLY, so combining hmm+vol_target
-  # ("both") de-risks the most and gives the LOWEST return+Sharpe — not what we want here.
-  # Still attentive daily: the HMM regime (and thus gross) is recomputed every weekday.
+  # DEPLOYED book risk overlay (Pablo, 2026-06-05): raw momentum alpha + crash_only overlay.
+  # Goal = raise Sharpe WITHOUT the drawdown. crash_only (Daniel-Moskowitz dynamic) stays
+  # FULL in low/mid vol and de-risks ONLY in the top (panic) tier → directional eval N=200:
+  # Sharpe 0.93 (ties the no-overlay max) but maxDD -30% vs -40% (none); beats the hmm
+  # overlay on Sharpe (0.87) AND return (475%->623%). inverse-vol weighting did NOT help
+  # (Sharpe 0.79) and combining overlays de-risks too much, so neither is used.
+  # Still attentive daily: the regime/vol_rank is recomputed every weekday.
   # See docs/analysis/2026-06-05-deployed-book-prereg.md. Change = this one line.
-  overlay: hmm                      # none | hmm | vol_target | both
+  overlay: crash_only               # none | hmm | crash_only | vol_target | both
+  weighting: equal                  # equal | inv_vol (inv_vol underperformed; kept off)
   target_vol: 0.12                  # constant annualized vol target (vol_target/both)
   vol_window: 126                   # trailing bars for the book's realized-vol estimate (~6mo)
   gross_cap: 1.0                    # max gross after vol-targeting (1.0 = no leverage)
   gross_floor: 0.0                  # min gross after vol-targeting
+  # Macro-event risk overlay (risk timing, NOT alpha): in the N days before a scheduled
+  # high-vol US event (FOMC/payrolls, core/macro_calendar.py), scale the book's gross by
+  # `event_derisk`. 0 or 1.0 = OFF (default). e.g. 0.5 = halve exposure into the event.
+  # Opt-in + forward-test only — it does not predict the event outcome.
+  event_derisk: 0.0                 # 0/1.0 = off; <1.0 = de-risk factor in the event window
+  event_window_days: 2              # days before an event to de-risk
   max_sector_fraction: 0.30         # max share of the book in any one GICS sector
                                     #   (lets a hot sector lead — e.g. semis — but caps
                                     #   it; the rest fills with next-best momentum elsewhere)

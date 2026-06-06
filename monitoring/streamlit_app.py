@@ -252,6 +252,53 @@ def _cross_sectional_book(book: dict) -> None:
         } for t in targets], width="stretch", hide_index=True)
 
 
+def _macro_events() -> None:
+    """US macro calendar panel: upcoming scheduled high-vol events (risk timing, not alpha)."""
+    from datetime import date, timedelta
+
+    from core.macro_calendar import days_to_next_event, high_impact_events, in_event_window
+
+    st.subheader("US Macro Calendar")
+    today = date.today()
+    flagged, label = in_event_window(today, window_days=2)
+    d2n = days_to_next_event(today)
+    if flagged:
+        st.warning(f"⚠️ {label} within 2 days — pre-event vol window "
+                   "(book de-risks here when the event overlay is enabled).")
+    elif d2n is not None:
+        st.caption(f"Next high-impact event in **{d2n}** day(s).")
+    rows = [{"date": d.isoformat(), "event": n, "in_days": (d - today).days}
+            for d, n in high_impact_events(today, today + timedelta(days=45))]
+    if rows:
+        st.dataframe(rows, width="stretch", hide_index=True)
+    st.caption("FOMC + payrolls (scheduled). Public events are priced in within seconds — "
+               "used for **risk timing** (de-risk into known vol), never for direction.")
+
+
+def _news_panel() -> None:
+    """Markets/macro headlines for operator awareness (no trading decision)."""
+    st.subheader("Markets / Macro Headlines")
+
+    @st.cache_data(ttl=300)                              # refetch at most every 5 min
+    def _cached() -> list:
+        from monitoring.news_feed import fetch_headlines
+        try:
+            return fetch_headlines(limit=12)
+        except Exception:
+            return []
+
+    heads = _cached()
+    if not heads:
+        st.info("No headlines right now (feeds unreachable).")
+        return
+    for h in heads:
+        src = h.get("source", "")
+        title, link = h.get("title", ""), h.get("link", "")
+        st.markdown(f"- [{title}]({link}) — *{src}*" if link else f"- {title} — *{src}*")
+    st.caption("Awareness only. Public headlines carry no tradable edge for a retail bot "
+               "(priced in instantly); this informs **you**, not the bot.")
+
+
 def render(symbol: str, toggles: dict) -> None:
     """Draw the whole dashboard from live + snapshot state (re-run on refresh)."""
     snap = load_snapshot()
@@ -276,6 +323,14 @@ def render(symbol: str, toggles: dict) -> None:
     if toggles.get("cross_book"):
         st.divider()
         _cross_sectional_book(load_book_snapshot())
+
+    if toggles.get("macro"):
+        st.divider()
+        mc, nf = st.columns(2)
+        with mc:
+            _macro_events()
+        with nf:
+            _news_panel()
 
     if toggles.get("price"):
         st.subheader(f"{symbol} Price")
@@ -323,6 +378,7 @@ symbol = st.sidebar.selectbox(
 )
 toggles = {
     "cross_book": st.sidebar.checkbox("Show cross-sectional book", value=True),
+    "macro": st.sidebar.checkbox("Show macro calendar + news", value=True),
     "price": st.sidebar.checkbox("Show price chart", value=True),
     "regime_history": st.sidebar.checkbox("Show regime history", value=True),
     "transition": st.sidebar.checkbox("Show transition matrix", value=False),
