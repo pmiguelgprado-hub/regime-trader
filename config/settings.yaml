@@ -48,12 +48,14 @@ cross_sectional:
   max_concurrent: 50                # max names held (≈top decile of ~500)
   risk_on_gross: 1.0                # gross exposure in the low-vol regime (overlay=hmm)
   risk_off_gross: 0.5               # gross exposure in the high-vol regime (overlay=hmm)
-  # DEPLOYED book risk overlay (Pablo, 2026-06-05): raw momentum alpha (won return+Sharpe
-  # in the directional eval) + constant-vol-target overlay (Barroso–Santa-Clara; cut
-  # drawdown across every variant). Priority = risk-adjusted (Sharpe). Supersedes the
-  # binary HMM gross overlay for the live book. See
-  # docs/analysis/2026-06-05-deployed-book-prereg.md.
-  overlay: vol_target               # none | hmm | vol_target | both
+  # DEPLOYED book risk overlay (Pablo, 2026-06-05): raw momentum alpha + HMM regime
+  # overlay. Pablo's goal = MAXIMIZE return + Sharpe with risk control; hmm is the
+  # frontier point that does that (Sharpe 0.87 ≈ the no-overlay max 0.93, but maxDD -27%
+  # vs -40%). Overlays trade Sharpe for drawdown MONOTONICALLY, so combining hmm+vol_target
+  # ("both") de-risks the most and gives the LOWEST return+Sharpe — not what we want here.
+  # Still attentive daily: the HMM regime (and thus gross) is recomputed every weekday.
+  # See docs/analysis/2026-06-05-deployed-book-prereg.md. Change = this one line.
+  overlay: hmm                      # none | hmm | vol_target | both
   target_vol: 0.12                  # constant annualized vol target (vol_target/both)
   vol_window: 126                   # trailing bars for the book's realized-vol estimate (~6mo)
   gross_cap: 1.0                    # max gross after vol-targeting (1.0 = no leverage)
