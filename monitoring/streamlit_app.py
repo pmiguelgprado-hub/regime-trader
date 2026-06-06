@@ -229,9 +229,14 @@ def _cross_sectional_book(book: dict) -> None:
     a, b, c, d = st.columns(4)
     a.metric("Vol rank (regime)", f"{book.get('vol_rank', 0.0):.2f}",
              help="0 = low-vol/risk-on (full gross), 1 = high-vol/risk-off (de-risked)")
-    b.metric("Gross exposure", f"{book.get('gross', 0.0) * 100:.0f}%")
+    b.metric("Gross exposure", f"{book.get('gross', 0.0) * 100:.0f}%",
+             help="risk overlay scales total gross to the market's volatility")
     c.metric("Names", len(book.get("targets", [])))
     d.metric("Equity", f"${book.get('equity', 0.0):,.0f}")
+    overlay = book.get("overlay", "—")
+    cadence = ("monthly re-rank" if book.get("rebalanced") else "daily risk re-scale")
+    st.caption(f"Book: **{book.get('book', 'baseline')}** · overlay **{overlay}** · "
+               f"{cadence} · month {book.get('selection_month', '—')}")
     executed = book.get("executed") or []
     if book.get("dry_run", True):
         st.warning(f"DRY-RUN plan ({book.get('mode', '—')}) — no orders submitted")

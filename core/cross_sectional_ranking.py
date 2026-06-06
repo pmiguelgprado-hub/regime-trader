@@ -269,6 +269,61 @@ def select_top_sector_capped(
     return out
 
 
+def _overlay_gross(
+    top: list[str],
+    frames: dict[str, pd.DataFrame],
+    ts: "pd.Timestamp | None",
+    vol_rank: float,
+    overlay: str,
+    risk_on_gross: float,
+    risk_off_gross: float,
+    target_vol: float,
+    vol_window: int,
+    gross_cap: float,
+    gross_floor: float,
+) -> float:
+    """Shared gross-exposure overlay for the book (used by baseline + challenger).
+
+    Maps the chosen ``overlay`` mode to a total gross multiplier:
+
+    * ``"none"``       — 1.0 (naked ranker; the gate's incremental-value control).
+    * ``"hmm"``        — :func:`~core.asset_rotation.regime_gross_scale` (binary vol tier).
+    * ``"vol_target"`` — :func:`~core.asset_rotation.vol_target_scale` so the book's realized
+      vol approaches ``target_vol`` (Barroso-Santa-Clara / Daniel-Moskowitz constant-vol).
+    * ``"both"``       — product of the two, capped.
+
+    The book-vol estimate is the equal-weight trailing return of the selected names, sliced
+    causally to ``ts`` (or the full series when ``ts`` is None, i.e. the one-shot live path).
+    """
+    from core.asset_rotation import regime_gross_scale, vol_target_scale
+
+    hmm_g = regime_gross_scale(vol_rank, risk_on_gross, risk_off_gross)
+    if overlay == "none":
+        return 1.0
+    if overlay == "hmm":
+        return hmm_g
+    vol_g = gross_cap
+    if top:
+        rets = pd.DataFrame(
+            {s: (frames[s]["close"].loc[:ts] if ts is not None else frames[s]["close"]).pct_change()
+             for s in top}
+        ).dropna(how="all")
+        book_ret = rets.tail(vol_window).mean(axis=1).dropna()
+        vol_g = vol_target_scale(book_ret.to_numpy(), target_vol, gross_cap, gross_floor)
+    if overlay == "vol_target":
+        return vol_g
+    if overlay == "both":
+        return min(gross_cap, hmm_g * vol_g)
+    return 1.0
+
+
+def _resolve_overlay(overlay: "str | None", use_overlay: bool) -> str:
+    """Back-compat: map the legacy ``use_overlay`` bool to an overlay mode when unset."""
+    if overlay is not None:
+        return overlay
+    return "hmm" if use_overlay else "none"
+
+
 def make_book_weights(
     frames: dict[str, pd.DataFrame],
     lookback: int = DEFAULT_LOOKBACK,
@@ -279,6 +334,11 @@ def make_book_weights(
     risk_on_gross: float = 1.0,
     risk_off_gross: float = 0.5,
     use_overlay: bool = True,
+    overlay: "str | None" = None,
+    target_vol: float = 0.12,
+    vol_window: int = 126,
+    gross_cap: float = 1.0,
+    gross_floor: float = 0.0,
     sector_map: dict[str, str] | None = None,
     max_sector_frac: float = 0.30,
 ) -> Callable[[pd.Timestamp, float], dict[str, float]]:
@@ -309,9 +369,9 @@ def make_book_weights(
     Returns:
         A stateful ``weight_fn(ts, vol_rank)`` closure (monthly-memoized).
     """
-    from core.asset_rotation import regime_gross_scale
     from core.portfolio import portfolio_target_weights
 
+    mode = _resolve_overlay(overlay, use_overlay)
     cache: dict[tuple[int, int], list[str]] = {}
 
     def weight_fn(ts: pd.Timestamp, vol_rank: float) -> dict[str, float]:
@@ -324,7 +384,8 @@ def make_book_weights(
                                             max_n=max_concurrent)
                    if sector_map else select_top(ranked, frac))
             cache[key] = top
-        gross = regime_gross_scale(vol_rank, risk_on_gross, risk_off_gross) if use_overlay else 1.0
+        gross = _overlay_gross(top, frames, ts, vol_rank, mode, risk_on_gross,
+                               risk_off_gross, target_vol, vol_window, gross_cap, gross_floor)
         return portfolio_target_weights(gross, top, max_single, max_concurrent)
 
     return weight_fn
@@ -385,29 +446,9 @@ def make_book_weights_challenger(
     Returns:
         A stateful ``weight_fn(ts, vol_rank)`` closure (monthly-memoized selection + gross).
     """
-    from core.asset_rotation import regime_gross_scale, vol_target_scale
     from core.portfolio import portfolio_target_weights
 
     cache: dict[tuple[int, int], tuple[list[str], float]] = {}
-
-    def _book_gross(top: list[str], ts: pd.Timestamp, vol_rank: float) -> float:
-        hmm_g = regime_gross_scale(vol_rank, risk_on_gross, risk_off_gross)
-        if overlay == "hmm":
-            return hmm_g
-        vol_g = gross_cap
-        if top:
-            rets = pd.DataFrame(
-                {s: frames[s]["close"].loc[:ts].pct_change() for s in top}
-            ).dropna(how="all")
-            book_ret = rets.tail(vol_window).mean(axis=1).dropna()
-            vol_g = vol_target_scale(
-                book_ret.to_numpy(), target_vol, gross_cap, gross_floor
-            )
-        if overlay == "vol_target":
-            return vol_g
-        if overlay == "both":
-            return min(gross_cap, hmm_g * vol_g)
-        return 1.0  # "none"
 
     def weight_fn(ts: pd.Timestamp, vol_rank: float) -> dict[str, float]:
         key = (ts.year, ts.month)
@@ -419,7 +460,8 @@ def make_book_weights_challenger(
             top = (select_top_sector_capped(ranked, sector_map, frac, max_sector_frac,
                                             max_n=max_concurrent)
                    if sector_map else select_top(ranked, frac))
-            gross = _book_gross(top, ts, vol_rank)
+            gross = _overlay_gross(top, frames, ts, vol_rank, overlay, risk_on_gross,
+                                   risk_off_gross, target_vol, vol_window, gross_cap, gross_floor)
             cache[key] = (top, gross)
         else:
             top, gross = memo
@@ -439,6 +481,11 @@ def compute_book_targets(
     risk_on_gross: float = 1.0,
     risk_off_gross: float = 0.5,
     use_overlay: bool = True,
+    overlay: "str | None" = None,
+    target_vol: float = 0.12,
+    vol_window: int = 126,
+    gross_cap: float = 1.0,
+    gross_floor: float = 0.0,
     sector_map: dict[str, str] | None = None,
     max_sector_frac: float = 0.30,
 ) -> dict[str, float]:
@@ -459,14 +506,15 @@ def compute_book_targets(
     Returns:
         ``{symbol: target_weight}`` for the selected top-decile names.
     """
-    from core.asset_rotation import regime_gross_scale
     from core.portfolio import portfolio_target_weights
 
     ranked = rank_universe(frames, lookback, skip)
     top = (select_top_sector_capped(ranked, sector_map, frac, max_sector_frac,
                                     max_n=max_concurrent)
            if sector_map else select_top(ranked, frac))
-    gross = regime_gross_scale(vol_rank, risk_on_gross, risk_off_gross) if use_overlay else 1.0
+    mode = _resolve_overlay(overlay, use_overlay)
+    gross = _overlay_gross(top, frames, None, vol_rank, mode, risk_on_gross,
+                           risk_off_gross, target_vol, vol_window, gross_cap, gross_floor)
     return portfolio_target_weights(gross, top, max_single, max_concurrent)
 
 
@@ -509,27 +557,57 @@ def compute_book_targets_challenger(
     Returns:
         ``{symbol: target_weight}`` for the selected top-decile names.
     """
-    from core.asset_rotation import regime_gross_scale, vol_target_scale
     from core.portfolio import portfolio_target_weights
 
     ranked = rank_universe_residual(frames, market_close, lookback, skip, est_window)
     top = (select_top_sector_capped(ranked, sector_map, frac, max_sector_frac,
                                     max_n=max_concurrent)
            if sector_map else select_top(ranked, frac))
-
-    hmm_g = regime_gross_scale(vol_rank, risk_on_gross, risk_off_gross)
-    vol_g = gross_cap
-    if top and overlay in ("vol_target", "both"):
-        rets = pd.DataFrame({s: frames[s]["close"].pct_change() for s in top}).dropna(how="all")
-        book_ret = rets.tail(vol_window).mean(axis=1).dropna()
-        vol_g = vol_target_scale(book_ret.to_numpy(), target_vol, gross_cap, gross_floor)
-    gross = {
-        "none": 1.0,
-        "hmm": hmm_g,
-        "vol_target": vol_g,
-        "both": min(gross_cap, hmm_g * vol_g),
-    }.get(overlay, 1.0)
+    gross = _overlay_gross(top, frames, None, vol_rank, overlay, risk_on_gross,
+                           risk_off_gross, target_vol, vol_window, gross_cap, gross_floor)
     return portfolio_target_weights(gross, top, max_single, max_concurrent)
+
+
+def book_targets_fixed_selection(
+    frames: dict[str, pd.DataFrame],
+    selected: list[str],
+    vol_rank: float,
+    overlay: str = "vol_target",
+    risk_on_gross: float = 1.0,
+    risk_off_gross: float = 0.5,
+    target_vol: float = 0.12,
+    vol_window: int = 126,
+    gross_cap: float = 1.0,
+    gross_floor: float = 0.0,
+    max_single: float = 0.15,
+    max_concurrent: int = 50,
+) -> dict[str, float]:
+    """Re-scale a FIXED book selection to today's overlay gross (intra-month daily run).
+
+    The cross-sectional **selection** is a slow monthly signal (momentum 12-1) — re-ranking
+    it daily would churn the book and pay slippage for noise. But the **risk overlay** (the
+    constant-vol target) reads the market every day: this keeps the month's selected names
+    and only re-scales total gross to today's realized vol — de-risking when vol spikes,
+    re-risking when it subsides. That is what "attentive every day" should mean for a
+    monthly-rebalanced book: daily risk management, monthly name turnover. Pure + causal.
+
+    Args:
+        frames: ``{symbol: OHLCV}`` ending at the latest closed bar (≥ the selected names).
+        selected: The month's selected book names (from the last monthly re-rank).
+        vol_rank: Current market regime volatility rank in ``[0, 1]`` (HMM on the proxy).
+        overlay: Gross-overlay mode (``none`` | ``hmm`` | ``vol_target`` | ``both``).
+        Other args: as in :func:`compute_book_targets`.
+
+    Returns:
+        ``{symbol: target_weight}`` for the (still-priced) selected names, re-scaled to the
+        overlay gross. Names no longer in ``frames`` are dropped.
+    """
+    from core.portfolio import portfolio_target_weights
+
+    present = [s for s in selected if s in frames]
+    gross = _overlay_gross(present, frames, None, vol_rank, overlay, risk_on_gross,
+                           risk_off_gross, target_vol, vol_window, gross_cap, gross_floor)
+    return portfolio_target_weights(gross, present, max_single, max_concurrent)
 
 
 def targets_to_orders(

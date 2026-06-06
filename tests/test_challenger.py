@@ -21,6 +21,7 @@ import pytest
 
 from backtest.performance import pbo_cscv
 from core.cross_sectional_ranking import (
+    book_targets_fixed_selection,
     compute_book_targets_challenger,
     make_book_weights_challenger,
     rank_universe_residual,
@@ -144,6 +145,21 @@ def test_compute_book_targets_challenger_overlay_modes() -> None:
         overlay="hmm", risk_off_gross=0.5,
     )
     assert sum(t_hmm.values()) == pytest.approx(0.5)     # high-vol tier de-risks to 0.5
+
+
+def test_fixed_selection_keeps_names_and_rescales_gross() -> None:
+    """Daily re-scale: keep the month's names, overlay sets gross; drop unpriced names."""
+    frames, _ = _toy_universe()
+    sel = ["S0", "S1", "S2", "GONE"]                 # GONE not in frames -> dropped
+    none = book_targets_fixed_selection(frames, sel, vol_rank=0.5, overlay="none",
+                                        max_single=1.0, max_concurrent=10)
+    assert set(none) == {"S0", "S1", "S2"}
+    assert sum(none.values()) == pytest.approx(1.0)
+    derisked = book_targets_fixed_selection(frames, sel, vol_rank=0.5, overlay="vol_target",
+                                            target_vol=0.02, vol_window=120,
+                                            max_single=1.0, max_concurrent=10)
+    assert sum(derisked.values()) < 1.0              # vol-target cuts gross, same names
+    assert set(derisked) <= {"S0", "S1", "S2"}
 
 
 # ----------------------------------------------------------------- PBO ---

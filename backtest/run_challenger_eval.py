@@ -105,8 +105,13 @@ def main() -> None:
     )
     variants = {
         "baseline_raw_hmm": make_book_weights(
-            cons, risk_on_gross=1.0, risk_off_gross=0.5, use_overlay=True, **common,
+            cons, risk_on_gross=1.0, risk_off_gross=0.5, overlay="hmm", **common,
         ),
+        "raw_none": make_book_weights(cons, overlay="none", **common),
+        "raw_vol_target": make_book_weights(
+            cons, overlay="vol_target", target_vol=0.12, **common,
+        ),
+        "raw_both": make_book_weights(cons, overlay="both", target_vol=0.12, **common),
         "resid_none": make_book_weights_challenger(
             cons, market_close, overlay="none", **common,
         ),

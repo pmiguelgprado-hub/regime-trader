@@ -2,13 +2,15 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  regime-trader cross-sectional book monthly rebalance (launchd LaunchAgent).
-  Runs `main.py --rebalance --execute` on the 1st of each month, ~22:30 CEST (after
-  the US close). It submits the PAPER rebalance so the forward track record measures
-  the pre-registered monthly-rebalanced book (a dry-run scheduler would instead
-  measure buy-and-hold of the first decile). The open-order guard
-  (drop_open_order_symbols) makes a same-window re-run a no-op. PAPER account only;
-  real money remains BLOCKED until the frozen gate passes.
+  regime-trader cross-sectional book DAILY rebalance (launchd LaunchAgent).
+  Runs `main.py --rebalance --execute` every weekday (Mon-Fri) ~22:30 CEST, after the
+  US close. Daily cadence with split timescales so the bot is attentive every day
+  without churning a slow signal: the momentum SELECTION re-ranks only on the first run
+  of a new calendar month; intra-month daily runs keep the month's names and only
+  re-scale total gross exposure to today's market vol via the vol-target overlay
+  (de-risk on vol spikes, re-risk on calm). The open-order guard (drop_open_order_symbols)
+  makes a same-day re-run a no-op. PAPER account only; real money remains BLOCKED until
+  the gate passes.
 
   Install:
     cp deploy/com.regimetrader.rebalance.plist ~/Library/LaunchAgents/
@@ -37,13 +39,15 @@
   <key>WorkingDirectory</key>
   <string>/Users/pablomiguelgonzalezprado/AIOS/projects/regime-trader</string>
 
-  <!-- 1st of each month at 22:30 local time (Day omitted month-part = every month). -->
+  <!-- Every weekday (Weekday 1-5 = Mon-Fri) at 22:30 local time, after the US close. -->
   <key>StartCalendarInterval</key>
-  <dict>
-    <key>Day</key><integer>1</integer>
-    <key>Hour</key><integer>22</integer>
-    <key>Minute</key><integer>30</integer>
-  </dict>
+  <array>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>22</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>22</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>22</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>22</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>22</integer><key>Minute</key><integer>30</integer></dict>
+  </array>
 
   <key>RunAtLoad</key>
   <false/>

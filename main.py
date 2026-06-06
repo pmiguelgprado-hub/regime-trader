@@ -1147,7 +1147,8 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
     """
     from broker.alpaca_client import AlpacaClient, AlpacaConfig
     from broker.order_executor import OrderExecutor
-    from core.cross_sectional_ranking import (compute_book_targets,
+    from core.cross_sectional_ranking import (book_targets_fixed_selection,
+                                              compute_book_targets,
                                               compute_book_targets_challenger,
                                               drop_open_order_symbols,
                                               plan_rebalance_orders, targets_to_orders)
@@ -1195,7 +1196,39 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
     hist_depth = (max(lookback + skip, est_window) + 60) if challenger else (lookback + skip + 10)
     frames = md.get_history_multi(universe, config.get("broker", {}).get("timeframe", "1Day"),
                                   hist_depth)
-    if challenger:
+    # Daily cadence: re-rank the (slow, monthly) momentum selection only on the FIRST run
+    # of a new calendar month; on intra-month daily runs keep the month's names and only
+    # re-scale total gross to today's market vol via the overlay (de-risk on vol spikes,
+    # re-risk on calm). "Attentive every day" = daily risk management, monthly name turnover.
+    snap_path = BOOK_SNAPSHOT_CHALLENGER if challenger else BOOK_SNAPSHOT
+    month_key = f"{datetime.now(timezone.utc):%Y-%m}"
+    prior_sel: list[str] = []
+    prior_month = None
+    if Path(snap_path).exists():
+        try:
+            prior = json.loads(Path(snap_path).read_text())
+            prior_sel = [s for s in (prior.get("selected_symbols") or []) if isinstance(s, str)]
+            prior_month = prior.get("selection_month")
+        except Exception:
+            prior_sel, prior_month = [], None
+    src = config.get("challenger", {}) if challenger else cs
+    ov = str(src.get("overlay", "vol_target" if challenger else "hmm"))
+    tv = float(src.get("target_vol", 0.12))
+    vw = int(src.get("vol_window", 126))
+    gc = float(src.get("gross_cap", 1.0))
+    gf = float(src.get("gross_floor", 0.0))
+    reuse_selection = bool(prior_sel) and prior_month == month_key
+
+    if reuse_selection:
+        targets = book_targets_fixed_selection(
+            frames, prior_sel, vol_rank, overlay=ov,
+            risk_on_gross=float(cs.get("risk_on_gross", 1.0)),
+            risk_off_gross=float(cs.get("risk_off_gross", 0.5)),
+            target_vol=tv, vol_window=vw, gross_cap=gc, gross_floor=gf,
+            max_single=max_single, max_concurrent=max_concurrent,
+        )
+        selected_symbols = prior_sel
+    elif challenger:
         ch = config.get("challenger", {})
         targets = compute_book_targets_challenger(
             frames, proxy_hist["close"], vol_rank, lookback=lookback, skip=skip,
@@ -1217,14 +1250,22 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
             max_single=max_single, max_concurrent=max_concurrent,
             risk_on_gross=float(cs.get("risk_on_gross", 1.0)),
             risk_off_gross=float(cs.get("risk_off_gross", 0.5)),
+            overlay=str(cs.get("overlay", "hmm")),
+            target_vol=float(cs.get("target_vol", 0.12)),
+            vol_window=int(cs.get("vol_window", 126)),
+            gross_cap=float(cs.get("gross_cap", 1.0)),
+            gross_floor=float(cs.get("gross_floor", 0.0)),
             sector_map=load_sector_map(),
             max_sector_frac=float(cs.get("max_sector_fraction", 0.30)),
         )
+    if not reuse_selection:
+        selected_symbols = list(targets)
     prices = {s: float(frames[s]["close"].iloc[-1]) for s in targets if s in frames}
     plan = targets_to_orders(targets, equity, prices)
 
     tlog.log(tlog.main, "rebalance_plan",
-             f"vol_rank={vol_rank:.2f} names={len(plan)} gross={sum(o['weight'] for o in plan):.2f}",
+             f"vol_rank={vol_rank:.2f} names={len(plan)} gross={sum(o['weight'] for o in plan):.2f} "
+             f"{'reuse' if reuse_selection else 'rerank'} month={month_key} overlay={ov}",
              mode="PAPER" if paper else "LIVE", dry_run=dry_run)
     for o in plan:
         tlog.log(tlog.main, "rebalance_target",
@@ -1260,6 +1301,10 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
         "book": "challenger" if challenger else "baseline",
         "mode": "PAPER" if paper else "LIVE",
         "dry_run": dry_run,
+        "selection_month": month_key,
+        "selected_symbols": selected_symbols,
+        "rebalanced": not reuse_selection,
+        "overlay": ov,
         "vol_rank": vol_rank,
         "gross": round(sum(o["weight"] for o in plan), 4),
         "equity": equity,

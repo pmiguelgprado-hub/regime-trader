@@ -46,8 +46,18 @@ cross_sectional:
   skip: 21                          # bars skipped at the recent end (≈1 month; 12-1)
   top_fraction: 0.10                # hold the top decile by momentum
   max_concurrent: 50                # max names held (≈top decile of ~500)
-  risk_on_gross: 1.0                # gross exposure in the low-vol regime
-  risk_off_gross: 0.5               # gross exposure in the high-vol regime (de-risked)
+  risk_on_gross: 1.0                # gross exposure in the low-vol regime (overlay=hmm)
+  risk_off_gross: 0.5               # gross exposure in the high-vol regime (overlay=hmm)
+  # DEPLOYED book risk overlay (Pablo, 2026-06-05): raw momentum alpha (won return+Sharpe
+  # in the directional eval) + constant-vol-target overlay (Barroso–Santa-Clara; cut
+  # drawdown across every variant). Priority = risk-adjusted (Sharpe). Supersedes the
+  # binary HMM gross overlay for the live book. See
+  # docs/analysis/2026-06-05-deployed-book-prereg.md.
+  overlay: vol_target               # none | hmm | vol_target | both
+  target_vol: 0.12                  # constant annualized vol target (vol_target/both)
+  vol_window: 126                   # trailing bars for the book's realized-vol estimate (~6mo)
+  gross_cap: 1.0                    # max gross after vol-targeting (1.0 = no leverage)
+  gross_floor: 0.0                  # min gross after vol-targeting
   max_sector_fraction: 0.30         # max share of the book in any one GICS sector
                                     #   (lets a hot sector lead — e.g. semis — but caps
                                     #   it; the rest fills with next-best momentum elsewhere)
