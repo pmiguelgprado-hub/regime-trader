@@ -56,7 +56,10 @@ cross_sectional:
   # (Sharpe 0.79) and combining overlays de-risks too much, so neither is used.
   # Still attentive daily: the regime/vol_rank is recomputed every weekday.
   # See docs/analysis/2026-06-05-deployed-book-prereg.md. Change = this one line.
-  overlay: crash_only               # none | hmm | crash_only | vol_target | both
+  overlay: crash_only               # none | hmm | hmm_prob | crash_only | vol_target | both
+                                    #   hmm_prob = hmm fed with the POSTERIOR-WEIGHTED vol rank
+                                    #   (core/meta_overlay.py): continuous de-risk, no argmax cliff.
+                                    #   Not deployed — eval/challenger only until directionally compared.
   weighting: equal                  # equal | inv_vol (inv_vol underperformed; kept off)
   target_vol: 0.12                  # constant annualized vol target (vol_target/both)
   vol_window: 126                   # trailing bars for the book's realized-vol estimate (~6mo)

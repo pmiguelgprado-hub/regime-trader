@@ -748,6 +748,29 @@ class TradingSystem:
                 "vol_rank": round(vol_rank, 2),
                 "runner_ups": runner,
             }
+            # Fuzzy layer (core.meta_overlay): posterior-weighted rank + one-step
+            # transition hazard + predictive entropy for the dashboard gauges.
+            try:
+                import numpy as np
+
+                from core.meta_overlay import (high_tier_hazard,
+                                               predictive_entropy_norm,
+                                               prob_weighted_vol_rank)
+                rank_map = {
+                    sid: (vols.index(ri.expected_volatility) / (len(vols) - 1)
+                          if len(vols) > 1 else 0.0)
+                    for sid, ri in infos.items()
+                }
+                sp_arr = np.asarray(probs, dtype=float)
+                A = self.hmm.get_transition_matrix()
+                block["regime"]["vol_rank_prob"] = round(
+                    prob_weighted_vol_rank(sp_arr, rank_map), 4)
+                block["regime"]["transition_hazard"] = round(
+                    high_tier_hazard(sp_arr, A, rank_map), 4)
+                block["regime"]["predictive_entropy"] = round(
+                    predictive_entropy_norm(sp_arr, A), 4)
+            except Exception:  # noqa: BLE001 - dashboard extras are best-effort
+                pass
 
         b = self.risk.breaker
         peak = getattr(b, "_peak_equity", 0.0) or 0.0
@@ -1182,7 +1205,8 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
                                 lookback + skip + 300)
     feats = FeatureEngineer().build_features(proxy_hist)
     states = hmm.predict_regime_filtered(feats)
-    vol_rank = orch.vol_rank.get(states[-1].state_id, 0.5)
+    # vol_rank is resolved below once the overlay mode is known (hmm_prob reads the
+    # posterior-weighted rank; every legacy mode keeps the argmax rank).
 
     # Universe history -> cross-sectional rank -> top-decile targets -> share plan.
     universe = load_sp500()
@@ -1213,6 +1237,18 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
             prior_sel, prior_month = [], None
     src = config.get("challenger", {}) if challenger else cs
     ov = str(src.get("overlay", "vol_target" if challenger else "hmm"))
+    # Fuzzy layer: hmm_prob swaps the argmax rank for the posterior-weighted rank
+    # (continuous de-risking, no cliff); every other mode keeps the argmax rank
+    # untouched. Hazard/entropy are recorded for the dashboard either way.
+    from core.meta_overlay import (high_tier_hazard, predictive_entropy_norm,
+                                   vol_rank_for_overlay)
+    last = states[-1]
+    vol_rank = vol_rank_for_overlay(ov, last.state_probabilities, last.state_id,
+                                    orch.vol_rank)
+    hazard = high_tier_hazard(last.state_probabilities, hmm.get_transition_matrix(),
+                              orch.vol_rank)
+    entropy = predictive_entropy_norm(last.state_probabilities,
+                                      hmm.get_transition_matrix())
     tv = float(src.get("target_vol", 0.12))
     vw = int(src.get("vol_window", 126))
     gc = float(src.get("gross_cap", 1.0))
@@ -1324,6 +1360,8 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
         "rebalanced": not reuse_selection,
         "overlay": ov,
         "vol_rank": vol_rank,
+        "transition_hazard": round(hazard, 4),
+        "predictive_entropy": round(entropy, 4),
         "gross": round(sum(o["weight"] for o in plan), 4),
         "equity": equity,
         "universe_size": len(frames),

@@ -300,7 +300,9 @@ def _overlay_gross(
     hmm_g = regime_gross_scale(vol_rank, risk_on_gross, risk_off_gross)
     if overlay == "none":
         return 1.0
-    if overlay == "hmm":
+    if overlay in ("hmm", "hmm_prob"):
+        # hmm_prob: same rank -> gross map; the caller feeds the posterior-weighted
+        # (continuous) vol rank instead of the argmax rank (core.meta_overlay).
         return hmm_g
     if overlay == "crash_only":
         # Daniel-Moskowitz dynamic: stay FULL in low/mid vol (keep the upside), de-risk

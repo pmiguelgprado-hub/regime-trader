@@ -42,6 +42,7 @@ import numpy as np
 import pandas as pd
 
 from core.hmm_engine import HMMEngine, Regime
+from core.meta_overlay import high_tier_hazard, prob_weighted_vol_rank
 from core.portfolio import portfolio_target_weights
 from core.regime_strategies import StrategyConfig, StrategyOrchestrator
 from core.risk_manager import RiskManager
@@ -182,6 +183,7 @@ class Backtester:
             orch = StrategyOrchestrator(self.strategy_config, self.hmm_engine.regime_info)
             if self.shuffle_regimes is not None:
                 self._permute_strategy_map(orch, seed=self.shuffle_regimes + len(fold_bounds))
+            fold_transmat = self.hmm_engine.get_transition_matrix()
 
             # Causal filtered inference: warm up on train history, act on test slice.
             infer_feats = feats.iloc[tr_s:te_e]
@@ -259,6 +261,12 @@ class Backtester:
                         flickering=bool(flicker_flags[k]),
                         weight=held_weight,
                         vol_rank=orch.vol_rank.get(state.state_id, 1.0),
+                        vol_rank_prob=prob_weighted_vol_rank(
+                            state.state_probabilities, orch.vol_rank
+                        ),
+                        regime_hazard=high_tier_hazard(
+                            state.state_probabilities, fold_transmat, orch.vol_rank
+                        ),
                         risk_state=self.risk_manager.state.value,
                         asset_return=r,
                         port_return=net_ret,
@@ -285,7 +293,7 @@ class Backtester:
         )
 
     def run_portfolio(self, frames: dict[str, pd.DataFrame], return_weights: bool = False,
-                      weight_fn=None):
+                      weight_fn=None, vol_rank_col: str = "vol_rank"):
         """Multi-asset backtest: regime sets the gross budget, split across names.
 
         The market-wide volatility regime (detected on the **primary** symbol via
@@ -310,6 +318,9 @@ class Backtester:
             return_weights: If True, also return the per-bar weight DataFrame.
             weight_fn: Optional ``(timestamp, vol_rank) -> {symbol: weight}``; defaults
                 to equal-split of the regime budget.
+            vol_rank_col: regime_history column fed to ``weight_fn`` — ``"vol_rank"``
+                (argmax tier, deployed default) or ``"vol_rank_prob"`` (posterior-
+                weighted continuous rank for the ``hmm_prob`` overlay).
 
         Returns:
             Portfolio equity ``Series`` (or ``(equity, weights_df)`` if requested).
@@ -318,7 +329,7 @@ class Backtester:
         primary = symbols[0]
         base = self.run({primary: frames[primary]})   # regime + gross budget per OOS bar
         budget = base.regime_history["weight"]
-        vol_rank = base.regime_history["vol_rank"]
+        vol_rank = base.regime_history[vol_rank_col]
         idx = budget.index
         rc = self.risk_manager.config
         rets = {
