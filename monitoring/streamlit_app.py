@@ -1,16 +1,17 @@
-"""Streamlit dashboard for regime-trader — matches the reference build's UI.
+"""Streamlit dashboard for regime-trader — AIOS cockpit look.
 
 Run it:
 
     streamlit run monitoring/streamlit_app.py     # http://localhost:8501
 
-Stock Streamlit **dark** theme (Source-Sans font, red accent — no custom
-palette, matching the video), with: a sidebar (refresh interval, primary
-symbol, view toggles), a metrics row (Mode / Equity / Cash / Market), Regime
-Detection (regime, confidence, stability, vol rank + an orange confidence gauge
-and runner-up states), Risk Status (drawdown / leverage + circuit-breaker
-banner), the learned-regime table, the portfolio, a candlestick price panel,
-and optional transition-matrix / model-info / logs panels.
+AIOS theme (black canvas, violet #7e14ff primary — palette from the cockpit
+CSS; see .streamlit/config.toml), with: a sidebar (refresh interval, primary
+symbol, view toggles), a metrics row (Mode / Equity / Cash / Market), the
+portfolio-evolution chart (Alpaca equity history + drawdown), Regime Detection
+(regime, confidence, stability, vol rank, transition hazard + gauges and
+runner-up states), Risk Status (drawdown / leverage + circuit-breaker banner),
+the learned-regime table, the portfolio, a candlestick price panel, and
+optional transition-matrix / model-info / logs panels.
 
 Live account / positions / price are pulled from Alpaca on every refresh (real
 time); the regime + risk detail come from ``state_snapshot.json`` (written by
@@ -40,6 +41,7 @@ import streamlit as st
 
 from monitoring.dashboard_data import (
     live_account,
+    live_portfolio_history,
     live_positions,
     live_price,
     load_book_snapshot,
@@ -55,6 +57,8 @@ st.markdown("<style>.block-container{padding-top:2.2rem;}</style>",
 
 ORANGE = "#ff7f0e"
 UP, DOWN = "#26a69a", "#ef5350"
+# AIOS cockpit accents (palette source: ~/AIOS/projects/aios-gateway/cockpit CSS)
+VIOLET, PINK, CYAN = "#7e14ff", "#ed4c75", "#47bfff"
 
 
 def _confidence_gauge(pct: float, regime: str) -> go.Figure:
@@ -80,6 +84,71 @@ def _confidence_gauge(pct: float, regime: str) -> go.Figure:
     ))
     fig.update_layout(
         height=270, margin=dict(l=24, r=24, t=46, b=8),
+        paper_bgcolor="rgba(0,0,0,0)", font={"color": "#fafafa"},
+        transition={"duration": 600, "easing": "cubic-in-out"},
+    )
+    return fig
+
+
+def _portfolio_evolution(df) -> None:
+    """Alpaca account equity + running drawdown — the cartera evolution chart."""
+    st.subheader("Portfolio evolution — Alpaca account")
+    if df is None or df.empty:
+        st.info("No portfolio history (broker unreachable or empty account).")
+        return
+    from plotly.subplots import make_subplots
+
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.72, 0.28],
+                        vertical_spacing=0.04)
+    fig.add_trace(go.Scatter(
+        x=df.index, y=df["equity"], name="Equity", mode="lines",
+        line={"color": VIOLET, "width": 2.2},
+        fill="tozeroy", fillcolor="rgba(126,20,255,0.10)",
+    ), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=df.index, y=df["drawdown"] * 100.0, name="Drawdown",
+        mode="lines", line={"color": PINK, "width": 1.4},
+        fill="tozeroy", fillcolor="rgba(237,76,117,0.18)",
+    ), row=2, col=1)
+    fig.update_yaxes(title_text="USD", row=1, col=1)
+    fig.update_yaxes(title_text="DD %", row=2, col=1)
+    fig.update_yaxes(range=[df["equity"].min() * 0.985, df["equity"].max() * 1.015],
+                     row=1, col=1)
+    fig.update_layout(
+        template="plotly_dark", height=420, showlegend=False,
+        margin=dict(l=10, r=10, t=10, b=10),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+    )
+    st.plotly_chart(fig, width="stretch")
+    last, first = float(df["equity"].iloc[-1]), float(df["equity"].iloc[0])
+    pl = last - first
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Equity", f"${last:,.2f}", delta=f"{pl:+,.2f}")
+    period_ret = f"{(last / first - 1.0) * 100.0:+.2f}%" if first > 0 else "—"
+    c2.metric("Period return", period_ret)
+    c3.metric("Max drawdown", f"{df['drawdown'].min() * 100.0:.2f}%")
+
+
+def _hazard_gauge(hazard: float) -> go.Figure:
+    """Violet transition-hazard gauge: P(high-vol tier at the next close)."""
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=hazard * 100.0,
+        number={"suffix": "%", "font": {"size": 36}},
+        title={"text": "Transition hazard (t+1 high-vol)", "font": {"size": 14}},
+        gauge={
+            "axis": {"range": [0, 100], "tickwidth": 1, "tickcolor": "#777",
+                     "ticksuffix": "%"},
+            "bar": {"color": VIOLET, "thickness": 0.30},
+            "bgcolor": "rgba(0,0,0,0)",
+            "borderwidth": 0,
+            "steps": [{"range": [0, 100], "color": "rgba(126,20,255,0.10)"}],
+            "threshold": {"line": {"color": PINK, "width": 3},
+                          "thickness": 0.8, "value": 35.0},   # hedge trigger
+        },
+    ))
+    fig.update_layout(
+        height=230, margin=dict(l=24, r=24, t=42, b=8),
         paper_bgcolor="rgba(0,0,0,0)", font={"color": "#fafafa"},
         transition={"duration": 600, "easing": "cubic-in-out"},
     )
@@ -149,7 +218,24 @@ def _regime_detection(snap: dict) -> None:
     elif reg:
         st.warning("… stabilizing")
     if reg:
-        st.plotly_chart(_confidence_gauge(conf, str(name)), width="stretch")
+        hazard = reg.get("transition_hazard")
+        if hazard is None:                       # fall back to the book snapshot
+            hazard = (load_book_snapshot() or {}).get("transition_hazard")
+        if hazard is not None:
+            g1, g2 = st.columns(2)
+            with g1:
+                st.plotly_chart(_confidence_gauge(conf, str(name)), width="stretch")
+            with g2:
+                st.plotly_chart(_hazard_gauge(float(hazard)), width="stretch")
+                extras = []
+                if reg.get("vol_rank_prob") is not None:
+                    extras.append(f"vol rank (posterior): {reg['vol_rank_prob']:.2f}")
+                if reg.get("predictive_entropy") is not None:
+                    extras.append(f"predictive entropy: {reg['predictive_entropy']:.2f}")
+                if extras:
+                    st.caption("  |  ".join(extras))
+        else:
+            st.plotly_chart(_confidence_gauge(conf, str(name)), width="stretch")
         runners = reg.get("runner_ups") or {}
         others = [f"{k.upper()}: {v:.2e}" for k, v in list(runners.items())[1:5]]
         if others:
@@ -309,6 +395,9 @@ def render(symbol: str, toggles: dict) -> None:
     # forbids a fragment (run_every) from writing to the sidebar.
     st.caption(f"Last refresh: {datetime.now():%H:%M:%S}")
     _metrics(acct, snap)
+    if toggles.get("evolution"):
+        st.divider()
+        _portfolio_evolution(live_portfolio_history(period=toggles.get("ev_period", "3M")))
     st.divider()
     left, right = st.columns([2, 1])
     with left:
@@ -377,6 +466,9 @@ symbol = st.sidebar.selectbox(
          "regime proxy. The chart pulls live price from Alpaca.",
 )
 toggles = {
+    "evolution": st.sidebar.checkbox("Show portfolio evolution", value=True),
+    "ev_period": st.sidebar.selectbox("Evolution period", ["1M", "3M", "6M", "1A"],
+                                      index=1),
     "cross_book": st.sidebar.checkbox("Show cross-sectional book", value=True),
     "macro": st.sidebar.checkbox("Show macro calendar + news", value=True),
     "price": st.sidebar.checkbox("Show price chart", value=True),

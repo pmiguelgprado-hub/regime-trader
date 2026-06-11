@@ -1,8 +1,15 @@
-# Default Streamlit dark theme — matches the reference dashboard
-# (dark background, red accent, Source Sans font). Do not force monospace or a
-# custom palette; the video uses stock dark.
+# AIOS cockpit theme (2026-06-11 mandate: dashboard matches the AIOS UI/UX).
+# Palette lifted from the cockpit CSS (~/AIOS/projects/aios-gateway/cockpit):
+# black canvas, violet primary #7e14ff, near-white text. Charts keep their own
+# semantic colors (teal/red candles); violet/pink are the accent layer.
+# (Supersedes the earlier "stock dark, match the video" choice — the reference
+# is now the AIOS cockpit, per docs/analysis/2026-06-11-meta-overlay-triage.md.)
 [theme]
 base = "dark"
+primaryColor = "#7e14ff"
+backgroundColor = "#000000"
+secondaryBackgroundColor = "#120420"
+textColor = "#e6e6e6"
 
 [server]
 headless = true

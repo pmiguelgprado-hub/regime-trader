@@ -230,6 +230,31 @@ class AlpacaClient:
         """
         return self.get_account()["buying_power"]
 
+    def get_portfolio_history(self, period: str = "1M",
+                              timeframe: str = "1D") -> dict[str, list]:
+        """Fetch the account's equity/P&L history (dashboard evolution chart).
+
+        Args:
+            period: Lookback window (Alpaca syntax: ``1M``, ``3M``, ``1A`` ...).
+            timeframe: Bar resolution (``1D`` daily, ``15Min`` intraday ...).
+
+        Returns:
+            ``{timestamp, equity, profit_loss, profit_loss_pct}`` plain lists
+            (timestamps are epoch seconds, as returned by the API).
+        """
+        from alpaca.trading.requests import GetPortfolioHistoryRequest
+
+        req = GetPortfolioHistoryRequest(period=period, timeframe=timeframe)
+        hist = self._retry(
+            lambda: self.trading.get_portfolio_history(req), "get_portfolio_history"
+        )
+        return {
+            "timestamp": list(hist.timestamp or []),
+            "equity": [float(v) for v in (hist.equity or [])],
+            "profit_loss": [float(v) for v in (hist.profit_loss or [])],
+            "profit_loss_pct": [float(v) for v in (hist.profit_loss_pct or [])],
+        }
+
     def get_positions(self) -> list[dict[str, Any]]:
         """Fetch all open positions.
 

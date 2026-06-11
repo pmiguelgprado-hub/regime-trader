@@ -150,6 +150,57 @@ def live_positions() -> list[dict[str, Any]]:
         return []
 
 
+def portfolio_history_frame(raw: Optional[dict]) -> Optional[pd.DataFrame]:
+    """Shape a portfolio-history payload into the evolution-chart frame.
+
+    Args:
+        raw: ``AlpacaClient.get_portfolio_history`` output (or None).
+
+    Returns:
+        DataFrame indexed by ``timestamp`` with ``equity``, ``profit_loss`` and
+        ``drawdown`` (fraction from the running equity peak, <= 0), or None when
+        the payload is missing/empty.
+    """
+    if not raw or not raw.get("timestamp") or not raw.get("equity"):
+        return None
+    try:
+        idx = pd.to_datetime(pd.Series(raw["timestamp"], dtype="int64"), unit="s")
+        eq = pd.Series([float(v) for v in raw["equity"]], index=idx, name="equity")
+        pl = pd.Series(
+            [float(v) for v in (raw.get("profit_loss") or [0.0] * len(eq))][: len(eq)],
+            index=idx, name="profit_loss",
+        )
+        # Alpaca pads the window with equity=0 before the account was funded;
+        # those rows poison returns/drawdown (divide-by-zero). Keep from the
+        # first positive-equity bar onward.
+        funded = eq > 0.0
+        if not funded.any():
+            return None
+        start = funded.idxmax()
+        eq, pl = eq.loc[start:], pl.loc[start:]
+        dd = eq / eq.cummax() - 1.0
+        df = pd.DataFrame({"equity": eq, "profit_loss": pl, "drawdown": dd})
+        df.index.name = "timestamp"
+        return df
+    except (ValueError, TypeError):
+        return None
+
+
+def live_portfolio_history(period: str = "3M",
+                           timeframe: str = "1D") -> Optional[pd.DataFrame]:
+    """Pull the account's equity evolution from Alpaca (None if unreachable)."""
+    try:
+        from broker.alpaca_client import AlpacaClient, AlpacaConfig
+
+        client = AlpacaClient(AlpacaConfig.from_env())
+        client.connect()
+        return portfolio_history_frame(
+            client.get_portfolio_history(period=period, timeframe=timeframe)
+        )
+    except Exception:  # noqa: BLE001 - dashboard degrades to a placeholder
+        return None
+
+
 def live_price(symbol: str, lookback_bars: int = 180,
                timeframe: str = "1Day") -> Optional[pd.DataFrame]:
     """Pull recent OHLCV from Alpaca for the price panel (None if unreachable)."""
