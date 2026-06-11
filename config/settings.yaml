@@ -176,6 +176,32 @@ backtest:
   risk_free_rate: 0.045             # annual risk-free rate for Sharpe/Sortino (4.5%)
 
 # ---------------------------------------------------------------------------
+# options_hedge — tail-risk put-spread overlay (pre-registered v1, ships OFF)
+#   Risk action keyed to the HMM transition hazard (core/meta_overlay.py): when
+#   P(high-vol tier tomorrow) holds >= trigger_hazard for trigger_days closes and
+#   the book is still exposed, buy a defined-risk SPY put debit spread under a
+#   hard premium budget. NOT alpha — capped-cost crash insurance. Knobs frozen in
+#   docs/analysis/2026-06-11-meta-overlay-triage.md §3 (no sweep). Orders are
+#   double-gated: enabled AND allow_orders AND --execute. Paper account only.
+# ---------------------------------------------------------------------------
+options_hedge:
+  enabled: false                    # master switch (false = the check never runs)
+  allow_orders: false               # false = plan/log only even with --execute
+  trigger_hazard: 0.35              # open when hazard >= this ...
+  trigger_days: 2                   # ... for this many consecutive closes
+  release_hazard: 0.20              # close when hazard < this ...
+  release_days: 5                   # ... for this many consecutive closes
+  min_book_gross: 0.6               # only hedge a book that is still exposed
+  long_otm: 0.04                    # long put ~4% OTM
+  short_otm: 0.10                   # short put ~10% OTM
+  dte_min: 30                       # expiry window (days)
+  dte_max: 60
+  dte_target: 45
+  budget_quarter_bp: 25             # net premium cap per quarter (bp of equity)
+  budget_year_bp: 100               # net premium cap per rolling year (bp of equity)
+  max_structures: 1                 # one live hedge at a time
+
+# ---------------------------------------------------------------------------
 # risk_monitor — intraday crash mitigation (main.py --risk-check, every 15 min)
 #   RISK-ONLY ladder on the account's intraday return vs prior close:
 #   alert -> derisk (sell 1-derisk_scale of each name) -> flatten (liquidate).

@@ -103,9 +103,14 @@ def main() -> None:
         frac=0.10, max_single=0.15, max_concurrent=50,
         sector_map=sector_map, max_sector_frac=0.30,
     )
+    # hmm_prob reads the posterior-weighted "vol_rank_prob" column (core/meta_overlay.py):
+    # same rank->gross map as hmm, continuous input instead of the argmax cliff.
     variants = {
         "baseline_raw_hmm": make_book_weights(
             cons, risk_on_gross=1.0, risk_off_gross=0.5, overlay="hmm", **common,
+        ),
+        "raw_hmm_prob": make_book_weights(
+            cons, risk_on_gross=1.0, risk_off_gross=0.5, overlay="hmm_prob", **common,
         ),
         "raw_none": make_book_weights(cons, overlay="none", **common),
         "raw_vol_target": make_book_weights(
@@ -139,7 +144,8 @@ def main() -> None:
     oos_idx = None
     for label, wf in variants.items():
         print(f"Running {label} ...")
-        eq = bt.run_portfolio(frames_all, weight_fn=wf)
+        col = "vol_rank_prob" if label.endswith("hmm_prob") else "vol_rank"
+        eq = bt.run_portfolio(frames_all, weight_fn=wf, vol_rank_col=col)
         results[label] = eq
         oos_idx = eq.index
 

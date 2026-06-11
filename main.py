@@ -1349,6 +1349,36 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
         tlog.log(tlog.main, "rebalance_executed", f"{len(executed)} orders submitted",
                  mode="PAPER" if paper else "LIVE")
 
+    # Tail-hedge overlay check (options_hedge block; ships disabled). Risk action
+    # keyed to the transition hazard — pre-registered knobs, premium budget capped,
+    # double-gated: orders need BOTH --execute (not dry_run) AND allow_orders: true.
+    hedge_out: dict = {"action": "disabled"}
+    oh = config.get("options_hedge", {}) or {}
+    if bool(oh.get("enabled", False)) and not challenger:
+        try:
+            from alpaca.data.historical.option import OptionHistoricalDataClient
+
+            from broker.options_executor import OptionsHedgeExecutor
+            from core.options_overlay import OptionsHedgeConfig
+
+            fields = OptionsHedgeConfig.__dataclass_fields__
+            hcfg = OptionsHedgeConfig(**{k: v for k, v in oh.items()
+                                         if k in fields and k != "proxy"}, proxy=proxy)
+            odata = OptionHistoricalDataClient(credentials["api_key"],
+                                               credentials["secret_key"])
+            hedge_exec = OptionsHedgeExecutor(client.trading, odata, hcfg)
+            hedge_out = hedge_exec.run_check(
+                hazard=hazard, equity=equity,
+                book_gross=sum(o["weight"] for o in plan),
+                spot=float(proxy_hist["close"].iloc[-1]),
+                dry_run=dry_run or not bool(oh.get("allow_orders", False)),
+            )
+            tlog.log(tlog.main, "options_hedge",
+                     f"action={hedge_out.get('action')} hazard={hazard:.2f}")
+        except Exception:  # noqa: BLE001 - the hedge must never break the rebalance
+            logging.getLogger(__name__).exception("options hedge check failed")
+            hedge_out = {"action": "error"}
+
     # Persist the book snapshot for the dashboard (dry-run writes it too).
     snapshot = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -1362,6 +1392,7 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
         "vol_rank": vol_rank,
         "transition_hazard": round(hazard, 4),
         "predictive_entropy": round(entropy, 4),
+        "options_hedge": hedge_out,
         "gross": round(sum(o["weight"] for o in plan), 4),
         "equity": equity,
         "universe_size": len(frames),
