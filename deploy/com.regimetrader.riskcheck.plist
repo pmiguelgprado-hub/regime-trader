@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  regime-trader intraday risk monitor (launchd LaunchAgent).
+  Runs `main.py --risk-check` every 15 minutes, around the clock; the mode
+  exits immediately when the US market is closed (one cheap clock call), which
+  is simpler and DST-proof versus enumerating market-hour StartCalendarInterval
+  entries. RISK-ONLY: alert -> derisk -> flatten ladder on intraday drawdown.
+
+  Ships in OBSERVE mode: no `--execute` here and `risk_monitor.allow_orders`
+  defaults to false in settings.yaml, so it logs + alerts what it WOULD do.
+  Enabling order submission mid-gate amends the pre-registered strategy —
+  document a gate amendment first, then add --execute and flip allow_orders.
+
+  Install (Pablo's gated step — not loaded by the session that created this file):
+    cp deploy/com.regimetrader.riskcheck.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.regimetrader.riskcheck.plist
+  Stop:
+    launchctl unload ~/Library/LaunchAgents/com.regimetrader.riskcheck.plist
+  Run now (test):
+    launchctl start com.regimetrader.riskcheck
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.regimetrader.riskcheck</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/pablomiguelgonzalezprado/AIOS/projects/regime-trader/.venv/bin/python</string>
+    <string>main.py</string>
+    <string>--risk-check</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/pablomiguelgonzalezprado/AIOS/projects/regime-trader</string>
+
+  <key>StartInterval</key>
+  <integer>900</integer>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/pablomiguelgonzalezprado/AIOS/projects/regime-trader/logs/riskcheck.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/pablomiguelgonzalezprado/AIOS/projects/regime-trader/logs/riskcheck.err.log</string>
+</dict>
+</plist>

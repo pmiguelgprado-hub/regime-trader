@@ -173,6 +173,21 @@ backtest:
   risk_free_rate: 0.045             # annual risk-free rate for Sharpe/Sortino (4.5%)
 
 # ---------------------------------------------------------------------------
+# risk_monitor — intraday crash mitigation (main.py --risk-check, every 15 min)
+#   RISK-ONLY ladder on the account's intraday return vs prior close:
+#   alert -> derisk (sell 1-derisk_scale of each name) -> flatten (liquidate).
+#   Monotonic within a session (state file latch); next daily rebalance resets.
+#   allow_orders=false → observe+alert only. Turning it ON mid-gate changes the
+#   pre-registered strategy: do it only with a documented gate amendment.
+# ---------------------------------------------------------------------------
+risk_monitor:
+  alert_dd: 0.02                    # intraday DD -> WARNING alert
+  derisk_dd: 0.04                   # intraday DD -> sell down to derisk_scale
+  flatten_dd: 0.08                  # intraday DD -> emergency liquidation
+  derisk_scale: 0.5                 # fraction of each position kept after derisk
+  allow_orders: false               # false = observe mode (orders need --execute AND this)
+
+# ---------------------------------------------------------------------------
 # monitoring — dashboard + alerts
 # ---------------------------------------------------------------------------
 monitoring:

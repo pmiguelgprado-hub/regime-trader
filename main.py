@@ -1384,6 +1384,106 @@ def run_record_track(config: dict[str, Any], credentials: dict[str, str],
              mode="PAPER" if paper else "LIVE")
 
 
+RISK_STATE_FILE = "risk_monitor_state.json"
+
+
+def run_risk_check(config: dict[str, Any], credentials: dict[str, str],
+                   execute: bool = False,
+                   state_path: str = RISK_STATE_FILE) -> None:  # pragma: no cover - live broker/market
+    """One intraday risk-check cycle for the cross-sectional book (schedule every 15 min).
+
+    RISK-ONLY: watches the account's intraday drawdown vs the prior close and walks the
+    escalation ladder in :mod:`core.risk_monitor` (alert -> derisk -> flatten). It never
+    buys, never trades intraday alpha (the signal stack is daily-calibrated and LOCKED,
+    M3). Escalation is monotonic within a session via a small state file; the next
+    session resets it, so the latch auto-releases (the old halt-latch lesson).
+
+    Orders are submitted only when BOTH the ``--execute`` flag and the
+    ``risk_monitor.allow_orders`` config key are on — default is observe+alert only,
+    because an intraday kill-switch was not part of the frozen pre-registration and
+    silently enabling it would contaminate the 12-month forward gate.
+
+    Args:
+        config: Parsed settings.
+        credentials: Broker credentials.
+        execute: CLI gate for order submission.
+        state_path: Session-latch state file.
+    """
+    from broker.alpaca_client import AlpacaClient, AlpacaConfig
+    from broker.order_executor import OrderExecutor
+    from core.risk_monitor import (RiskThresholds, assess_intraday_risk, escalate,
+                                   plan_derisk_orders, plan_flatten_orders)
+    from monitoring.alerts import AlertConfig, AlertManager, AlertSeverity
+    from monitoring.logger import LoggerConfig, setup_logging
+
+    tlog = setup_logging(LoggerConfig(log_dir="logs"))
+    rm_cfg = config.get("risk_monitor", {})
+    thresholds = RiskThresholds(
+        alert_dd=float(rm_cfg.get("alert_dd", 0.02)),
+        derisk_dd=float(rm_cfg.get("derisk_dd", 0.04)),
+        flatten_dd=float(rm_cfg.get("flatten_dd", 0.08)),
+        derisk_scale=float(rm_cfg.get("derisk_scale", 0.5)),
+    )
+    allow_orders = execute and bool(rm_cfg.get("allow_orders", False))
+
+    paper = str(credentials.get("paper", "true")).lower() != "false"
+    client = AlpacaClient(AlpacaConfig(credentials["api_key"], credentials["secret_key"],
+                                       paper=paper))
+    client.connect()
+    if not client.is_market_open():
+        return                                  # launchd fires 24/7; quiet no-op when closed
+
+    acct = client.get_account()
+    equity = float(acct["equity"])
+    last_equity = float(acct.get("last_equity", 0.0))
+    intraday_ret = (equity / last_equity - 1.0) if last_equity > 0 else 0.0
+
+    # Session latch: only escalate within the same trading day (NY session date).
+    from zoneinfo import ZoneInfo
+    session = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+    state = {"session": session, "action": "ok"}
+    sp = Path(state_path)
+    if sp.exists():
+        try:
+            prev = json.loads(sp.read_text())
+            if prev.get("session") == session:
+                state["action"] = prev.get("action", "ok")
+        except (json.JSONDecodeError, OSError):
+            pass                                # unreadable state -> start the day at "ok"
+
+    assessed = assess_intraday_risk(equity, last_equity, thresholds)
+    action = escalate(state["action"], assessed)
+    already_acted = action == state["action"] and action in ("derisk", "flatten")
+    tlog.log(tlog.main, "risk_check",
+             f"intraday {intraday_ret:+.2%} equity={equity:.0f} -> {action}"
+             f"{' (latched)' if already_acted else ''}",
+             mode="PAPER" if paper else "LIVE")
+
+    if action in ("alert", "derisk", "flatten") and not already_acted:
+        alerts = AlertManager(AlertConfig(), trading_logger=tlog)
+        sev = AlertSeverity.WARNING if action == "alert" else AlertSeverity.CRITICAL
+        alerts.send(f"intraday_{action}",
+                    f"intraday return {intraday_ret:+.2%} breached {action} threshold "
+                    f"(equity {equity:.0f} vs prior close {last_equity:.0f})", sev)
+
+    if action in ("derisk", "flatten") and not already_acted:
+        held = {p["symbol"]: int(float(p["qty"])) for p in client.get_positions()}
+        orders = (plan_flatten_orders(held) if action == "flatten"
+                  else plan_derisk_orders(held, thresholds.derisk_scale))
+        if allow_orders:
+            results = OrderExecutor(client).submit_market_orders(orders)
+            tlog.log(tlog.main, "risk_check_executed",
+                     f"{action}: {len(results)} sell orders submitted",
+                     mode="PAPER" if paper else "LIVE")
+        else:
+            tlog.log(tlog.main, "risk_check_observe",
+                     f"{action}: would submit {len(orders)} sell orders "
+                     f"(allow_orders off — observe mode)")
+
+    state["action"] = action
+    sp.write_text(json.dumps(state))
+
+
 # ===========================================================================
 # Backtest mode (Phase 4 — unchanged)
 # ===========================================================================
@@ -1516,6 +1616,10 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     mode.add_argument("--record-track", action="store_true", dest="record_track",
                       help="append today's book/EW-S&P500/SPY NAV to the track record "
                            "(schedule daily; gate-evaluation plumbing, no orders)")
+    mode.add_argument("--risk-check", action="store_true", dest="risk_check",
+                      help="one intraday risk-check cycle (schedule every 15 min; "
+                           "alert/derisk/flatten ladder; orders only with --execute "
+                           "AND risk_monitor.allow_orders)")
     mode.add_argument("--live", action="store_true", help="paper/live trading loop (default)")
 
     parser.add_argument("--execute", action="store_true",
@@ -1562,6 +1666,8 @@ def main(argv: Optional[list[str]] = None) -> None:
                       universe_limit=args.limit, challenger=args.challenger)
     elif args.record_track:
         run_record_track(config, load_credentials())
+    elif args.risk_check:
+        run_risk_check(config, load_credentials(), execute=args.execute)
     else:  # default: live
         run_live(config, load_credentials())
 

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  regime-trader Streamlit dashboard (launchd LaunchAgent).
+  Keeps http://localhost:8501 alive across logouts/reboots. Binds localhost only
+  via server.headless; no auth layer, so do NOT expose beyond the machine.
+
+  Install (Pablo's gated step — not loaded by the session that created this file):
+    cp deploy/com.regimetrader.dashboard.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.regimetrader.dashboard.plist
+  Stop:
+    launchctl unload ~/Library/LaunchAgents/com.regimetrader.dashboard.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.regimetrader.dashboard</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/pablomiguelgonzalezprado/AIOS/projects/regime-trader/.venv/bin/python</string>
+    <string>-m</string>
+    <string>streamlit</string>
+    <string>run</string>
+    <string>monitoring/streamlit_app.py</string>
+    <string>--server.headless</string>
+    <string>true</string>
+    <string>--server.address</string>
+    <string>127.0.0.1</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/pablomiguelgonzalezprado/AIOS/projects/regime-trader</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/pablomiguelgonzalezprado/AIOS/projects/regime-trader/logs/dashboard.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/pablomiguelgonzalezprado/AIOS/projects/regime-trader/logs/dashboard.log</string>
+</dict>
+</plist>

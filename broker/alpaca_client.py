@@ -213,6 +213,7 @@ class AlpacaClient:
         acct = self._retry(self.trading.get_account, "get_account")
         return {
             "equity": float(acct.equity),
+            "last_equity": float(getattr(acct, "last_equity", 0.0) or 0.0),
             "cash": float(acct.cash),
             "buying_power": float(acct.buying_power),
             "portfolio_value": float(acct.portfolio_value),
