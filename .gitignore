@@ -62,3 +62,4 @@ data/feature_panel_latest.csv
 .idea/
 .vscode/
 *.swp
+risk_monitor_state.json

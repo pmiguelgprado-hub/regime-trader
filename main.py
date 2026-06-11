@@ -1298,7 +1298,9 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
         orders = plan_rebalance_orders(target_shares, held)
         # Idempotency guard: never re-submit a name that already has a pending order
         # (a re-run in the fill gap would double-submit; held doesn't yet reflect it).
-        open_syms = {o["symbol"] for o in client.get_orders(status="open")}
+        # limit=500: the book holds ~100 names; the default 100 could truncate.
+        open_syms = {o["symbol"]
+                     for o in client.get_order_history(limit=500, status="open")}
         if open_syms:
             kept = drop_open_order_symbols(orders, open_syms)
             tlog.log(tlog.main, "rebalance_open_order_guard",
