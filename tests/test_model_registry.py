@@ -63,3 +63,53 @@ def test_rollback_noop_with_single_version(tmp_path, fitted) -> None:
     reg.promote("SPY", v1)
     assert reg.rollback("SPY") is None
     assert reg.champion_version("SPY") == "v1"
+
+
+# --- T0.4 pin-champion: promotion records the champion's transition hash ----------
+
+
+def test_promote_records_champion_hash(tmp_path, fitted) -> None:
+    """Promoting a version persists its transition hash for the daily drift assert."""
+    reg = ModelRegistry(tmp_path)
+    v = reg.save_version(fitted, "SPY", version="v1")
+    reg.promote("SPY", v)
+    assert reg.champion_hash("SPY") == fitted.transition_hash()
+
+
+def test_champion_hash_none_when_no_champion(tmp_path) -> None:
+    assert ModelRegistry(tmp_path).champion_hash("SPY") is None
+
+
+def test_rollback_refreshes_champion_hash(tmp_path, fitted) -> None:
+    """After rollback the recorded hash must match the re-promoted version."""
+    reg = ModelRegistry(tmp_path)
+    reg.save_version(fitted, "SPY", version="v1")
+    reg.save_version(fitted, "SPY", version="v2")
+    reg.promote("SPY", "v2")
+    reg.rollback("SPY")
+    assert reg.champion_hash("SPY") == fitted.transition_hash()
+
+
+def test_load_pinned_champion_bootstraps_once_then_pins(tmp_path, fitted, monkeypatch) -> None:
+    """First call adopts/trains the legacy pickle and promotes it; afterwards the
+    champion is pinned — even a stale-by-age model must NOT trigger a retrain."""
+    import main as m
+
+    reg = ModelRegistry(tmp_path)
+    legacy = tmp_path / "hmm_SPY.pkl"
+    calls: list[int] = []
+
+    def train() -> None:
+        calls.append(1)
+        fitted.save(legacy)
+
+    hmm1, sha1 = m.load_pinned_champion(reg, "SPY", legacy, train)
+    assert calls == [1]                          # legacy absent -> trained + promoted
+    assert sha1 == fitted.transition_hash()
+    assert reg.champion_version("SPY") is not None
+
+    # force the old age rule to scream "stale": the pin must ignore it
+    monkeypatch.setattr(m, "_needs_retrain", lambda *a, **k: True)
+    hmm2, sha2 = m.load_pinned_champion(reg, "SPY", legacy, train)
+    assert calls == [1]                          # no retrain: champion is pinned
+    assert sha2 == sha1 == hmm2.transition_hash()

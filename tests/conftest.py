@@ -6,6 +6,16 @@ fixed seed so runs are deterministic.
 
 from __future__ import annotations
 
+import os
+
+# T0.4 (R-4): multithreaded BLAS reductions are order-nondeterministic — identical
+# HMM fits diverged at ~5e-13 and EM amplifies that into different restart winners.
+# Pin to one thread BEFORE numpy loads, mirroring the launchd plists, so the suite
+# tests the same numeric environment production runs in.
+for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+           "VECLIB_MAXIMUM_THREADS"):
+    os.environ.setdefault(_v, "1")
+
 import numpy as np
 import pandas as pd
 import pytest

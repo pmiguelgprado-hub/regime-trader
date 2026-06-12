@@ -42,6 +42,17 @@
     <string>--challenger</string>
   </array>
 
+  <!-- T0.4 determinism (R-4): multithreaded BLAS reductions are order-
+       nondeterministic; identical HMM fits diverged at ~5e-13 and EM amplified it.
+       Single-threaded numeric libs make fits bit-reproducible. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>OMP_NUM_THREADS</key><string>1</string>
+    <key>OPENBLAS_NUM_THREADS</key><string>1</string>
+    <key>MKL_NUM_THREADS</key><string>1</string>
+    <key>VECLIB_MAXIMUM_THREADS</key><string>1</string>
+  </dict>
+
   <key>WorkingDirectory</key>
   <string>/Users/pablomiguelgonzalezprado/AIOS/projects/regime-trader</string>
 

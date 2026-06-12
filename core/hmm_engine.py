@@ -22,6 +22,7 @@ each hidden state — never for online/backtest inference.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import pickle
 from dataclasses import dataclass, field
@@ -545,6 +546,24 @@ class HMMEngine:
         """
         self._check_fitted()
         return self.model.transmat_  # type: ignore[union-attr]
+
+    def transition_hash(self) -> str:
+        """Short content hash of the fitted transition matrix (drift audit, T0.4).
+
+        Logged on every live run so champion drift is detectable from logs alone:
+        the same pickled model must always hash identically, and any refit/swap —
+        however numerically small — changes the digest.
+
+        Returns:
+            First 16 hex chars of SHA-256 over the matrix bytes + shape.
+
+        Raises:
+            RuntimeError: If ``fit`` has not been called.
+        """
+        self._check_fitted()
+        m = np.ascontiguousarray(self.model.transmat_)  # type: ignore[union-attr]
+        h = hashlib.sha256(m.tobytes() + str(m.shape).encode())
+        return h.hexdigest()[:16]
 
     def detect_regime_change(self) -> bool:
         """Whether the latest bar is a *confirmed* regime change.

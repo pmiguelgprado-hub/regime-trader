@@ -30,6 +30,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+# T0.4 (R-4 root cause): multithreaded BLAS makes floating-point reductions
+# order-nondeterministic — two identical HMM fits in the same process diverged at
+# ~5e-13, EM iteration amplified it, and near-tie restarts then picked different
+# winners (the 0.37-0.49 Sharpe band across runs). Pin numeric libs to one thread
+# BEFORE numpy/pandas load. setdefault, so an explicit env override still wins.
+for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+           "VECLIB_MAXIMUM_THREADS"):
+    os.environ.setdefault(_v, "1")
+
 import pandas as pd
 import yaml
 
@@ -105,6 +114,42 @@ def _needs_retrain(model_path: str | Path, max_age_days: int = HMM_MAX_AGE_DAYS)
         return True
     age_days = (datetime.now().timestamp() - p.stat().st_mtime) / 86400.0
     return age_days > max_age_days
+
+
+def load_pinned_champion(registry: "Any", symbol: str, legacy_path: str | Path,
+                         train_fn: "Any") -> "tuple[Any, Optional[str]]":
+    """Load the pinned champion HMM, bootstrapping the registry once (T0.4).
+
+    Pin-champion operative amendment (2026-06-12): live runs load the registry
+    champion instead of refitting by age — refit on end-date="now" data produced a
+    different model every week, making the live book non-reproducible (R-4). On the
+    first call with an empty registry, the legacy single pickle (``legacy_path``) is
+    adopted: trained fresh if missing/stale (identical to what the old rule would
+    have run that day), then versioned and promoted. Refit-by-drift arrives in T3.3;
+    until then promotion is manual.
+
+    Args:
+        registry: :class:`core.model_registry.ModelRegistry`.
+        symbol: Ticker namespace of the model.
+        legacy_path: The pre-registry pickle (``models/hmm_<symbol>.pkl``).
+        train_fn: Zero-arg callable that (re)writes ``legacy_path``.
+
+    Returns:
+        ``(engine, expected_hash)`` — the loaded champion and the transition hash
+        recorded at promotion time (the reference for the daily drift assert).
+    """
+    from core.hmm_engine import HMMEngine
+
+    hmm = registry.load_champion(symbol)
+    if hmm is None:
+        if _needs_retrain(legacy_path):
+            train_fn()
+        hmm = HMMEngine.load(legacy_path)
+        version = registry.save_version(hmm, symbol)
+        registry.promote(symbol, version)
+        logging.getLogger(__name__).info(
+            "model registry bootstrapped: %s promoted as champion for %s", version, symbol)
+    return hmm, registry.champion_hash(symbol)
 
 
 # ===========================================================================
@@ -1111,10 +1156,39 @@ def run_once(config: dict[str, Any], credentials: dict[str, str],
     md = MarketData(client)
     model_path = f"{MODEL_DIR}/hmm_{symbol}.pkl"
     fe = FeatureEngineer()
-    if _needs_retrain(model_path):
-        tlog.log(tlog.main, "hmm_retrain", "model missing/stale; training")
-        run_train(config, symbols)
-    hmm = HMMEngine.load(model_path)
+    # T0.4 pin-champion: load the registry champion (no age-based refit — see
+    # docs/analysis/2026-06-12-pin-champion-amendment.md). Hash logged every run;
+    # mismatch vs the promotion-time hash = silent model swap -> CRITICAL alert.
+    from core.model_registry import ModelRegistry
+    registry = ModelRegistry(MODEL_DIR)
+    hmm, expected_sha = load_pinned_champion(
+        registry, symbol, model_path, lambda: run_train(config, symbols))
+    actual_sha = hmm.transition_hash()
+    tlog.log(tlog.main, "champion_hash",
+             f"{symbol} champion={registry.champion_version(symbol)} sha={actual_sha}")
+    if expected_sha and actual_sha != expected_sha:
+        alerts.send("champion_drift",
+                    f"{symbol} champion transition hash {actual_sha} != promoted "
+                    f"{expected_sha} — model artifact changed outside promotion")
+
+    # Dual-log (2-week equivalence check): where the old rule would have refit,
+    # fit a throwaway shadow and log agreement instead of swapping models.
+    if (bool(config.get("hmm", {}).get("dual_log_refit", True))
+            and _needs_retrain(registry.champion_path(symbol) or model_path)):
+        try:
+            from core.shadow_refit import append_row, compare_engines
+            from data.market_data import load_ohlcv
+            shadow_feats = fe.build_features(
+                load_ohlcv(symbol, timeframe=config.get("broker", {}).get("timeframe", "1Day")))
+            shadow = HMMEngine(hmm_cfg)
+            shadow.fit(shadow_feats)
+            row = compare_engines(hmm, shadow, shadow_feats)
+            append_row("logs/shadow_refit.csv", row)
+            tlog.log(tlog.main, "shadow_refit",
+                     f"agree={row['agree']} champion={row['champion_regime']} "
+                     f"shadow={row['shadow_regime']} -> logs/shadow_refit.csv")
+        except Exception as exc:  # noqa: BLE001 - measurement must never block the cycle
+            logging.getLogger(__name__).warning("shadow refit failed (non-fatal): %s", exc)
 
     risk_cfg.lock_file = risk_cfg.lock_file or "logs/trading_halted.lock"
     risk = RiskManager(risk_cfg)
@@ -1200,7 +1274,18 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
     md = MarketData(client)
 
     # Current market volatility regime (HMM on the proxy) -> gross-exposure overlay input.
-    hmm = HMMEngine.load(f"{MODEL_DIR}/hmm_{proxy}.pkl")
+    # T0.4 pin-champion: registry champion, hash-logged; never refit by age here.
+    from core.model_registry import ModelRegistry
+    registry = ModelRegistry(MODEL_DIR)
+    hmm, expected_sha = load_pinned_champion(
+        registry, proxy, f"{MODEL_DIR}/hmm_{proxy}.pkl", lambda: run_train(config, [proxy]))
+    actual_sha = hmm.transition_hash()
+    tlog.log(tlog.main, "champion_hash",
+             f"{proxy} champion={registry.champion_version(proxy)} sha={actual_sha}")
+    if expected_sha and actual_sha != expected_sha:
+        logging.getLogger(__name__).error(
+            "champion drift: %s hash %s != promoted %s — model artifact changed "
+            "outside promotion", proxy, actual_sha, expected_sha)
     orch = StrategyOrchestrator(strat_cfg, hmm.regime_info)
     proxy_hist = md.get_history(proxy, config.get("broker", {}).get("timeframe", "1Day"),
                                 lookback + skip + 300)

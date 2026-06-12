@@ -20,6 +20,7 @@ from typing import Optional
 from core.hmm_engine import HMMEngine
 
 _CHAMPION = "champion.txt"
+_CHAMPION_SHA = "champion_sha.txt"
 
 
 class ModelRegistry:
@@ -74,10 +75,23 @@ class ModelRegistry:
         return self._dir(symbol) / f"hmm_{v}.pkl"
 
     def promote(self, symbol: str, version: str) -> None:
-        """Mark ``version`` as the live champion."""
+        """Mark ``version`` as the live champion and record its transition hash.
+
+        The persisted hash (``champion_sha.txt``) is the reference for the daily
+        champion-drift assert (T0.4): live runs compare the loaded model's
+        :meth:`~core.hmm_engine.HMMEngine.transition_hash` against it and alert on
+        any mismatch — a silent model swap mid-gate would otherwise be invisible.
+        """
         d = self._dir(symbol)
         d.mkdir(parents=True, exist_ok=True)
         (d / _CHAMPION).write_text(version)
+        engine = HMMEngine.load(d / f"hmm_{version}.pkl")
+        (d / _CHAMPION_SHA).write_text(engine.transition_hash())
+
+    def champion_hash(self, symbol: str) -> Optional[str]:
+        """Transition hash recorded at promotion time, or None."""
+        p = self._dir(symbol) / _CHAMPION_SHA
+        return p.read_text().strip() if p.exists() else None
 
     def load_champion(self, symbol: str) -> Optional[HMMEngine]:
         """Load the champion engine, or None if absent."""
