@@ -1562,8 +1562,70 @@ def run_record_track(config: dict[str, Any], credentials: dict[str, str],
              f"sha={code_sha} -> {path}",
              mode="PAPER" if paper else "LIVE")
 
+    # Gap 6 tamper-evidence: chain today's hash of every gate-evidence file.
+    from core import evidence as ev
+    row = ev.append_chain(EVIDENCE_CHAIN, date, {
+        "track_record": path,
+        "book_snapshot": BOOK_SNAPSHOT,
+        "book_snapshot_challenger": BOOK_SNAPSHOT_CHALLENGER,
+        "champion_sha_SPY": f"{MODEL_DIR}/SPY/champion_sha.txt",
+    })
+    if row is not None:
+        tlog.log(tlog.main, "evidence_chain", f"{date} chain={row['chain'][:16]}")
+
 
 RISK_STATE_FILE = "risk_monitor_state.json"
+HEARTBEAT_STATE_FILE = "logs/heartbeat_state.json"
+EVIDENCE_CHAIN = "logs/evidence_chain.jsonl"
+
+
+def _heartbeat_check(config: dict[str, Any], tlog: Any,
+                     csv_path: str = TRACK_RECORD_CSV,
+                     state_path: str = HEARTBEAT_STATE_FILE,
+                     today: Optional[str] = None) -> bool:
+    """Alert (once per day) when the gate-evidence feed has gone stale (T0.5).
+
+    Hosted in ``--risk-check`` because launchd fires it 24/7 — the recorder
+    cannot watchdog itself. A last track-record row older than
+    ``monitoring.heartbeat_max_bdays`` business days means the 12-month gates
+    are silently starving; every silent day is unrecoverable evidence loss.
+
+    Args:
+        config: Parsed settings.
+        tlog: Trading logger (or None).
+        csv_path: Track-record CSV to check.
+        state_path: Once-per-day dedup state file.
+        today: ISO date override (tests).
+
+    Returns:
+        True if a CRITICAL alert was dispatched.
+    """
+    from zoneinfo import ZoneInfo
+
+    from core import track_record as tr
+    from monitoring.alerts import AlertConfig, AlertManager, AlertSeverity
+
+    today = today or datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+    stale = tr.staleness_bdays(csv_path, today)
+    max_bdays = int(config.get("monitoring", {}).get("heartbeat_max_bdays", 2))
+    if stale is None or stale <= max_bdays:
+        return False
+    sp = Path(state_path)
+    if sp.exists():
+        try:
+            if json.loads(sp.read_text()).get("alerted") == today:
+                return False                     # already screamed today
+        except (json.JSONDecodeError, OSError):
+            pass
+    alerts = AlertManager(_build_dataclass(AlertConfig, config.get("monitoring", {})),
+                          trading_logger=tlog)
+    alerts.send("track_record_stale",
+                f"last track-record row is {stale} business days old "
+                f"(max {max_bdays}) — the gate evidence feed may be down",
+                AlertSeverity.CRITICAL)
+    sp.parent.mkdir(parents=True, exist_ok=True)
+    sp.write_text(json.dumps({"alerted": today}))
+    return True
 
 
 def run_risk_check(config: dict[str, Any], credentials: dict[str, str],
@@ -1609,6 +1671,9 @@ def run_risk_check(config: dict[str, Any], credentials: dict[str, str],
     client = AlpacaClient(AlpacaConfig(credentials["api_key"], credentials["secret_key"],
                                        paper=paper))
     client.connect()
+    # T0.5 heartbeat: check the evidence feed BEFORE the market-closed exit —
+    # staleness is exactly the thing that shows up off-hours.
+    _heartbeat_check(config, tlog)
     if not client.is_market_open():
         return                                  # launchd fires 24/7; quiet no-op when closed
 
@@ -1799,6 +1864,9 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
                       help="one intraday risk-check cycle (schedule every 15 min; "
                            "alert/derisk/flatten ladder; orders only with --execute "
                            "AND risk_monitor.allow_orders)")
+    mode.add_argument("--verify-evidence", action="store_true", dest="verify_evidence",
+                      help="walk the evidence hash-chain and report the first "
+                           "broken link, if any (gap-6 tamper-evidence audit)")
     mode.add_argument("--live", action="store_true", help="paper/live trading loop (default)")
 
     parser.add_argument("--execute", action="store_true",
@@ -1847,6 +1915,12 @@ def main(argv: Optional[list[str]] = None) -> None:
         run_record_track(config, load_credentials())
     elif args.risk_check:
         run_risk_check(config, load_credentials(), execute=args.execute)
+    elif args.verify_evidence:
+        from core.evidence import verify_chain
+        ok, bad = verify_chain(EVIDENCE_CHAIN)
+        print(f"evidence chain: {'OK' if ok else f'BROKEN at row {bad}'} ({EVIDENCE_CHAIN})")
+        if not ok:
+            raise SystemExit(1)
     else:  # default: live
         run_live(config, load_credentials())
 

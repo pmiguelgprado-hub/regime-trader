@@ -76,6 +76,25 @@ def challenger_weights(snapshot_path: str) -> dict[str, float]:
     return {t["symbol"]: float(t["weight"]) for t in snap.get("targets", [])}
 
 
+def staleness_bdays(path: str, today: str) -> Optional[int]:
+    """Business days between the last recorded row and ``today`` (heartbeat, T0.5).
+
+    Weekend gaps are free (Friday row checked on Monday = 1). ``None`` when the
+    file is absent or empty — a not-yet-started series is not a stale one.
+
+    Args:
+        path: Track-record CSV.
+        today: ISO date to measure staleness against.
+    """
+    df = load_track_record(path)
+    if df.empty:
+        return None
+    last = str(df.iloc[-1]["date"])
+    if last >= today:
+        return 0
+    return max(0, len(pd.bdate_range(last, today)) - 1)
+
+
 def load_track_record(path: str) -> pd.DataFrame:
     """Load the track-record CSV (empty, correctly-typed frame if the file is absent).
 

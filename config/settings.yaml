@@ -233,4 +233,9 @@ risk_monitor:
 # ---------------------------------------------------------------------------
 monitoring:
   dashboard_refresh_seconds: 5      # terminal dashboard refresh interval
-  alert_rate_limit_minutes: 15      # min minutes between repeated alerts of same type
+  rate_limit_minutes: 15            # min minutes between repeated alerts of same type
+  telegram_enabled: true            # T0.5: push WARNING+ alerts via the AIOS gateway bot;
+                                    #   credentials from .env (TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID)
+  telegram_min_severity: warning    # info | warning | critical
+  heartbeat_max_bdays: 2            # T0.5: CRITICAL when track_record.csv is older than this
+                                    #   (business days; checked by --risk-check, once/day alert)

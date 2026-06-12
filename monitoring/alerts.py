@@ -42,6 +42,12 @@ class AlertConfig:
     from_addr: Optional[str] = None
     to_addrs: list[str] = field(default_factory=list)
     webhook_url: Optional[str] = None
+    # Telegram (T0.5): credentials come from env (TELEGRAM_BOT_TOKEN /
+    # TELEGRAM_CHAT_ID — settings.yaml is committed, secrets stay in .env).
+    telegram_enabled: bool = False
+    telegram_token: Optional[str] = None
+    telegram_chat_id: Optional[str] = None
+    telegram_min_severity: str = "warning"     # info | warning | critical
 
 
 class AlertManager:
@@ -65,6 +71,12 @@ class AlertManager:
         self.trading_logger = trading_logger
         self._clock = clock
         self._last_sent: dict[str, float] = {}
+        if config.telegram_enabled and not config.telegram_token:
+            import os
+
+            config.telegram_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+            config.telegram_chat_id = (config.telegram_chat_id
+                                       or os.environ.get("TELEGRAM_CHAT_ID"))
 
     def send(
         self, event: str, message: str, severity: AlertSeverity = AlertSeverity.INFO
@@ -104,7 +116,24 @@ class AlertManager:
                                     "severity": severity.value})
             except Exception as exc:  # noqa: BLE001
                 logger.error("alert webhook failed: %s", exc)
+        # 4) Telegram (T0.5): WARNING+ by default — unattended gates need a push
+        #    channel, but INFO-level chatter stays local.
+        if self._telegram_wanted(severity):
+            try:
+                self._send_telegram(line)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("alert telegram failed: %s", exc)
         return True
+
+    _SEVERITY_ORDER = {"info": 0, "warning": 1, "critical": 2}
+
+    def _telegram_wanted(self, severity: AlertSeverity) -> bool:
+        """Whether this severity clears the Telegram dispatch bar."""
+        c = self.config
+        if not (c.telegram_enabled and c.telegram_token and c.telegram_chat_id):
+            return False
+        floor = self._SEVERITY_ORDER.get(c.telegram_min_severity.lower(), 1)
+        return self._SEVERITY_ORDER[severity.value] >= floor
 
     def _is_rate_limited(self, event: str) -> bool:
         """Whether an event key is within its rate-limit window.
@@ -140,6 +169,25 @@ class AlertManager:
             if self.config.username:
                 smtp.login(self.config.username, self.config.password or "")
             smtp.send_message(msg)
+
+    def _send_telegram(self, text: str) -> None:  # pragma: no cover - network
+        """Send an alert via the Telegram Bot API (reuses the AIOS gateway bot).
+
+        Args:
+            text: Message body (plain text).
+        """
+        import urllib.parse
+        import urllib.request
+
+        data = urllib.parse.urlencode({
+            "chat_id": self.config.telegram_chat_id,
+            "text": f"📈 regime-trader\n{text}",
+        }).encode()
+        req = urllib.request.Request(
+            f"https://api.telegram.org/bot{self.config.telegram_token}/sendMessage",
+            data=data,
+        )
+        urllib.request.urlopen(req, timeout=5)
 
     def _send_webhook(self, payload: dict) -> None:  # pragma: no cover - network
         """POST an alert payload to the configured webhook.
