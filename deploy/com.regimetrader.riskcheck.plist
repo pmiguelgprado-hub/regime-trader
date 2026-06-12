@@ -13,7 +13,11 @@
   Enabling order submission mid-gate amends the pre-registered strategy —
   document a gate amendment first, then add --execute and flip allow_orders.
 
-  Install (Pablo's gated step — not loaded by the session that created this file):
+  Loaded 2026-06-12 in OBSERVE mode (T0.2). Verified before load: plist passes no
+  --execute, so main.py:run_risk_check forces allow_orders=False (CLI flag ANDed
+  with config) and the only order-submission call sits inside `if allow_orders:`.
+
+  Install:
     cp deploy/com.regimetrader.riskcheck.plist ~/Library/LaunchAgents/
     launchctl load ~/Library/LaunchAgents/com.regimetrader.riskcheck.plist
   Stop:
