@@ -81,6 +81,10 @@ overlay nuevo: `hmm_prob` (idéntico a `hmm` pero alimentado con $\widetilde{vr}
   se apaga. El condor short-vol queda fuera de v1.
 - Estos números son defaults de practicante (drag típico de programas sistemáticos de put
   spreads 50–150 bp/año), elegidos UNA vez, sin sweep. Cambiarlos = enmienda documentada.
+- **ENMIENDA 2026-06-12 (pre-activación, antes de todo track record):** `budget_quarter_bp`
+  25→50 — el smoke real cazó que 25 bp ($245 en cuenta de $98k) no compraba ni 1 spread
+  (debit real $466.5). Activado en paper con allow_orders. Ver
+  [[2026-06-12-hedge-activation]].
 
 ## 4. Qué NO cambia hoy
 

@@ -185,8 +185,16 @@ backtest:
 #   double-gated: enabled AND allow_orders AND --execute. Paper account only.
 # ---------------------------------------------------------------------------
 options_hedge:
-  enabled: false                    # master switch (false = the check never runs)
-  allow_orders: false               # false = plan/log only even with --execute
+  # ACTIVATED 2026-06-12 (Pablo) — paper account verified options level 3 (multi-leg
+  # OK) + end-to-end dry-run smoke against the real SPY chain passed. The nightly
+  # rebalance plist runs --execute, so a triggered hedge SUBMITS on the paper book.
+  # AMENDMENT (pre-activation, before any track record): budget_quarter_bp 25->50.
+  # The 25bp cap ($245 on the $98k account) could not afford ONE spread (real smoke
+  # debit $466.5) -> the overlay could never act. 50bp = exactly 1 structure per
+  # quarter at current prices; the 100bp/year cap still binds at ~2 structures.
+  # See docs/analysis/2026-06-12-hedge-activation.md.
+  enabled: true                     # master switch (false = the check never runs)
+  allow_orders: true                # false = plan/log only even with --execute
   trigger_hazard: 0.35              # open when hazard >= this ...
   trigger_days: 2                   # ... for this many consecutive closes
   release_hazard: 0.20              # close when hazard < this ...
@@ -197,7 +205,7 @@ options_hedge:
   dte_min: 30                       # expiry window (days)
   dte_max: 60
   dte_target: 45
-  budget_quarter_bp: 25             # net premium cap per quarter (bp of equity)
+  budget_quarter_bp: 50             # net premium cap per quarter (bp of equity)
   budget_year_bp: 100               # net premium cap per rolling year (bp of equity)
   max_structures: 1                 # one live hedge at a time
 
