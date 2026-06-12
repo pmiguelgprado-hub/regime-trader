@@ -4,8 +4,8 @@ Run it:
 
     streamlit run monitoring/streamlit_app.py     # http://localhost:8501
 
-AIOS theme (black canvas, violet #7e14ff primary — palette from the cockpit
-CSS; see .streamlit/config.toml), with: a sidebar (refresh interval, primary
+AIOS-style theme, black + blue (#47bfff primary — Pablo 2026-06-12; see
+.streamlit/config.toml), with: a sidebar (refresh interval, primary
 symbol, view toggles), a metrics row (Mode / Equity / Cash / Market), the
 portfolio-evolution chart (Alpaca equity history + drawdown), Regime Detection
 (regime, confidence, stability, vol rank, transition hazard + gauges and
@@ -57,8 +57,9 @@ st.markdown("<style>.block-container{padding-top:2.2rem;}</style>",
 
 ORANGE = "#ff7f0e"
 UP, DOWN = "#26a69a", "#ef5350"
-# AIOS cockpit accents (palette source: ~/AIOS/projects/aios-gateway/cockpit CSS)
-VIOLET, PINK, CYAN = "#7e14ff", "#ed4c75", "#47bfff"
+# AIOS accents, black+blue scheme (Pablo 2026-06-12). BLUE = cockpit cyan-blue;
+# PINK stays as the semantic alert/drawdown color.
+BLUE, PINK = "#47bfff", "#ed4c75"
 
 
 def _confidence_gauge(pct: float, regime: str) -> go.Figure:
@@ -102,8 +103,8 @@ def _portfolio_evolution(df) -> None:
                         vertical_spacing=0.04)
     fig.add_trace(go.Scatter(
         x=df.index, y=df["equity"], name="Equity", mode="lines",
-        line={"color": VIOLET, "width": 2.2},
-        fill="tozeroy", fillcolor="rgba(126,20,255,0.10)",
+        line={"color": BLUE, "width": 2.2},
+        fill="tozeroy", fillcolor="rgba(71,191,255,0.10)",
     ), row=1, col=1)
     fig.add_trace(go.Scatter(
         x=df.index, y=df["drawdown"] * 100.0, name="Drawdown",
@@ -130,7 +131,7 @@ def _portfolio_evolution(df) -> None:
 
 
 def _hazard_gauge(hazard: float) -> go.Figure:
-    """Violet transition-hazard gauge: P(high-vol tier at the next close)."""
+    """Blue transition-hazard gauge: P(high-vol tier at the next close)."""
     fig = go.Figure(go.Indicator(
         mode="gauge+number",
         value=hazard * 100.0,
@@ -139,10 +140,10 @@ def _hazard_gauge(hazard: float) -> go.Figure:
         gauge={
             "axis": {"range": [0, 100], "tickwidth": 1, "tickcolor": "#777",
                      "ticksuffix": "%"},
-            "bar": {"color": VIOLET, "thickness": 0.30},
+            "bar": {"color": BLUE, "thickness": 0.30},
             "bgcolor": "rgba(0,0,0,0)",
             "borderwidth": 0,
-            "steps": [{"range": [0, 100], "color": "rgba(126,20,255,0.10)"}],
+            "steps": [{"range": [0, 100], "color": "rgba(71,191,255,0.10)"}],
             "threshold": {"line": {"color": PINK, "width": 3},
                           "thickness": 0.8, "value": 35.0},   # hedge trigger
         },
