@@ -24,6 +24,7 @@ import json
 import logging
 import os
 import signal as signal_mod
+import subprocess
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1447,9 +1448,33 @@ def run_record_track(config: dict[str, Any], credentials: dict[str, str],
     spy_ret, date = _last_ret(proxy)
     ew_ret, _ = _last_ret(ew_proxy)
 
-    tr.append_day(path, date, equity, spy_ret, ew_ret)
+    # T0.1 challenger gate feed: synthesize the dry-run challenger's daily return by
+    # marking its snapshot target weights to market (it has no broker account of its own).
+    ch_weights = tr.challenger_weights(BOOK_SNAPSHOT_CHALLENGER)
+    ch_ret: "Optional[float]" = None
+    if ch_weights:
+        ch_rets: dict[str, float] = {}
+        for sym in ch_weights:
+            try:
+                ch_rets[sym] = _last_ret(sym)[0]
+            except Exception as exc:                      # missing bar -> cash (0) that day
+                tlog.log(tlog.main, "track_record", f"challenger ret fetch failed {sym}: {exc}")
+        ch_ret = tr.portfolio_return(ch_weights, ch_rets)
+
+    # T0.3 evidence audit trail: which checked-out code produced this row.
+    try:
+        code_sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
+                                  capture_output=True, text=True, timeout=10,
+                                  cwd=Path(__file__).parent).stdout.strip() or None
+    except Exception:
+        code_sha = None
+
+    tr.append_day(path, date, equity, spy_ret, ew_ret,
+                  challenger_ret=ch_ret, code_sha=code_sha)
     tlog.log(tlog.main, "track_record",
-             f"{date} book={equity:.0f} spy_ret={spy_ret:+.4f} ew_ret={ew_ret:+.4f} -> {path}",
+             f"{date} book={equity:.0f} spy_ret={spy_ret:+.4f} ew_ret={ew_ret:+.4f} "
+             f"challenger_ret={'n/a' if ch_ret is None else f'{ch_ret:+.4f}'} "
+             f"sha={code_sha} -> {path}",
              mode="PAPER" if paper else "LIVE")
 
 

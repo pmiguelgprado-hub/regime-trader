@@ -14,11 +14,12 @@
   That is Pablo's gated step:
     1. create a second Alpaca paper account, put its keys in a separate credentials file
     2. point a challenger-specific run at those keys
-    3. add --execute here + a challenger track recorder
-  Until then this scheduler only snapshots the challenger plan (≈ buy-and-hold of the
-  residual-momentum decile, NOT the monthly-rebalanced book — same caveat as the
-  baseline's dry-run history). PAPER only; real money BLOCKED until the challenger
-  gate passes (docs/analysis/2026-06-05-idio-momentum-challenger-prereg.md).
+    3. add --execute here (T5.4)
+  Until then this scheduler refreshes the challenger's target snapshot monthly; the
+  daily recordtrack job marks those targets to market into the additive
+  `challenger_nav` column of track_record.csv (T0.1 gate feed — synthetic NAV of the
+  monthly-refreshed dry-run book). PAPER only; real money BLOCKED until the
+  challenger gate passes (docs/analysis/2026-06-05-idio-momentum-challenger-prereg.md).
 
   Install:
     cp deploy/com.regimetrader.challenger.plist ~/Library/LaunchAgents/
@@ -26,7 +27,7 @@
   Stop:
     launchctl unload ~/Library/LaunchAgents/com.regimetrader.challenger.plist
 
-  NOT loaded by this session.
+  Loaded 2026-06-12 (T0.1 — gate feed needs the monthly snapshot refresh).
 -->
 <plist version="1.0">
 <dict>

@@ -34,12 +34,13 @@ this stays network-free and deterministic).
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Optional
 
 import pandas as pd
 
-COLUMNS = ["date", "book_nav", "spy_nav", "ew_nav"]
+COLUMNS = ["date", "book_nav", "spy_nav", "ew_nav", "challenger_nav", "code_sha"]
 
 
 def simple_return(prev: float, cur: float) -> float:
@@ -49,16 +50,52 @@ def simple_return(prev: float, cur: float) -> float:
     return cur / prev - 1.0
 
 
+def portfolio_return(weights: dict[str, float], rets: dict[str, float]) -> Optional[float]:
+    """Weighted one-day portfolio return; the unallocated remainder is cash at 0.
+
+    A symbol whose return is missing from ``rets`` contributes 0 (treated as cash —
+    conservative and explicit rather than silently re-normalizing the book). Returns
+    ``None`` for empty ``weights`` so the caller records a gap instead of a fake 0%.
+    """
+    if not weights:
+        return None
+    return sum(w * rets.get(sym, 0.0) for sym, w in weights.items())
+
+
+def challenger_weights(snapshot_path: str) -> dict[str, float]:
+    """Target weights from the challenger's dry-run book snapshot ({} if absent).
+
+    The challenger has no broker account of its own (DRY-RUN by design — see
+    deploy/com.regimetrader.challenger.plist), so its NAV must be synthesized by
+    marking the snapshot's target weights to market each day.
+    """
+    p = Path(snapshot_path)
+    if not p.exists():
+        return {}
+    snap = json.loads(p.read_text())
+    return {t["symbol"]: float(t["weight"]) for t in snap.get("targets", [])}
+
+
 def load_track_record(path: str) -> pd.DataFrame:
-    """Load the track-record CSV (empty, correctly-typed frame if the file is absent)."""
+    """Load the track-record CSV (empty, correctly-typed frame if the file is absent).
+
+    Columns added after the series started (``challenger_nav``, ``code_sha``) are
+    backfilled as NaN on legacy rows — additive schema, existing row values immutable.
+    """
     p = Path(path)
     if not p.exists() or p.stat().st_size == 0:
         return pd.DataFrame(columns=COLUMNS)
-    return pd.read_csv(p)
+    df = pd.read_csv(p)
+    for col in COLUMNS:
+        if col not in df.columns:
+            df[col] = pd.NA
+    return df
 
 
 def append_day(path: str, date: str, book_equity: float,
-               spy_ret: float, ew_ret: float) -> None:
+               spy_ret: float, ew_ret: float,
+               challenger_ret: Optional[float] = None,
+               code_sha: Optional[str] = None) -> None:
     """Append one day's NAV row, chaining the benchmark levels (idempotent on date).
 
     On the **first** row there is no prior level, so both benchmark indices are seeded at
@@ -67,23 +104,41 @@ def append_day(path: str, date: str, book_equity: float,
     ``ew_ret``. If ``date`` already equals the last recorded date the call is a **no-op**
     (a re-run within the same day must not duplicate or overwrite the row).
 
+    ``challenger_nav`` is the synthetic NAV of the dry-run challenger book (T0.1 gate
+    feed): seeded at ``book_equity`` on its first observation — including a re-seed after
+    a gap, since chaining across NaN is impossible — then compounded by ``challenger_ret``.
+    ``None`` records a gap (NaN), never a fake 0% day.
+
     Args:
         path: Destination CSV.
         date: ISO date string for the row (the dedup key).
         book_equity: The book's account equity that day (the real, net NAV level).
         spy_ret: SPY one-day simple return (from :func:`simple_return`).
         ew_ret: Equal-weight benchmark one-day return — RSP ETF (from :func:`simple_return`).
+        challenger_ret: Challenger book one-day return (from :func:`portfolio_return`),
+            or ``None`` when no challenger snapshot is available.
+        code_sha: Short git SHA of the checked-out code that produced the row
+            (T0.3 — launchd runs whatever is checked out; this makes drift auditable).
     """
     df = load_track_record(path)
     if not df.empty and str(df.iloc[-1]["date"]) == str(date):
         return  # idempotent: same-day re-run is a no-op
     if df.empty:
         spy_nav = ew_nav = book_equity            # seed all three equal on day 1
+        prev_ch = None
     else:
         last = df.iloc[-1]
         spy_nav = float(last["spy_nav"]) * (1.0 + spy_ret)
         ew_nav = float(last["ew_nav"]) * (1.0 + ew_ret)
-    row = {"date": date, "book_nav": book_equity, "spy_nav": spy_nav, "ew_nav": ew_nav}
+        prev_ch = last["challenger_nav"]
+    if challenger_ret is None:
+        ch_nav = None                             # gap day: record NaN, not fake 0%
+    elif prev_ch is None or pd.isna(prev_ch):
+        ch_nav = book_equity                      # (re-)seed at adoption, ret not applied
+    else:
+        ch_nav = float(prev_ch) * (1.0 + challenger_ret)
+    row = {"date": date, "book_nav": book_equity, "spy_nav": spy_nav, "ew_nav": ew_nav,
+           "challenger_nav": ch_nav, "code_sha": code_sha}
     out = pd.concat([df, pd.DataFrame([row], columns=COLUMNS)], ignore_index=True)
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(path, index=False)

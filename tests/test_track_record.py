@@ -56,3 +56,90 @@ def test_append_is_idempotent_on_repeated_date(tmp_path) -> None:
 def test_load_missing_file_is_empty(tmp_path) -> None:
     df = tr.load_track_record(str(tmp_path / "nope.csv"))
     assert len(df) == 0
+
+
+# --- T0.1: additive challenger_nav column (gate feed) + T0.3 code_sha ---------------
+
+
+def test_challenger_seeds_at_book_equity_on_adoption(tmp_path) -> None:
+    p = tmp_path / "track.csv"
+    tr.append_day(str(p), "2026-06-12", book_equity=100_000.0, spy_ret=0.0, ew_ret=0.0,
+                  challenger_ret=0.05)
+    row = tr.load_track_record(str(p)).iloc[0]
+    # first challenger observation: seeded at book equity, the day's ret is NOT applied
+    assert row["challenger_nav"] == 100_000.0
+
+
+def test_challenger_chains_from_prior_level(tmp_path) -> None:
+    p = tmp_path / "track.csv"
+    tr.append_day(str(p), "2026-06-12", 100_000.0, spy_ret=0.0, ew_ret=0.0,
+                  challenger_ret=0.0)
+    tr.append_day(str(p), "2026-06-13", 101_000.0, spy_ret=0.0, ew_ret=0.0,
+                  challenger_ret=0.02)
+    last = tr.load_track_record(str(p)).iloc[-1]
+    assert last["challenger_nav"] == pytest.approx(102_000.0)  # 100k * 1.02
+
+
+def test_challenger_adoption_mid_series_preserves_old_rows(tmp_path) -> None:
+    """Legacy 4-column CSV gains the challenger column additively (rows immutable)."""
+    p = tmp_path / "track.csv"
+    p.write_text("date,book_nav,spy_nav,ew_nav\n"
+                 "2026-06-04,101089.66,101089.66,101089.66\n")
+    tr.append_day(str(p), "2026-06-12", 97_000.0, spy_ret=0.01, ew_ret=0.01,
+                  challenger_ret=0.03)
+    df = tr.load_track_record(str(p))
+    assert len(df) == 2
+    # legacy row values untouched, challenger empty there
+    assert df.iloc[0]["book_nav"] == 101089.66
+    assert math.isnan(float(df.iloc[0]["challenger_nav"]))
+    # adoption row: challenger seeded at that day's book equity (no prior level to chain)
+    assert df.iloc[-1]["challenger_nav"] == 97_000.0
+    # benchmark chaining still works across the legacy row
+    assert df.iloc[-1]["spy_nav"] == pytest.approx(101089.66 * 1.01)
+
+
+def test_challenger_none_records_gap_then_reseeds(tmp_path) -> None:
+    p = tmp_path / "track.csv"
+    tr.append_day(str(p), "2026-06-12", 100_000.0, spy_ret=0.0, ew_ret=0.0)  # no challenger
+    df = tr.load_track_record(str(p))
+    assert math.isnan(float(df.iloc[0]["challenger_nav"]))
+    tr.append_day(str(p), "2026-06-13", 99_000.0, spy_ret=0.0, ew_ret=0.0,
+                  challenger_ret=0.04)
+    df = tr.load_track_record(str(p))
+    # cannot chain from NaN -> reseed at current book equity
+    assert df.iloc[-1]["challenger_nav"] == 99_000.0
+
+
+def test_code_sha_recorded_per_row(tmp_path) -> None:
+    p = tmp_path / "track.csv"
+    tr.append_day(str(p), "2026-06-12", 100_000.0, spy_ret=0.0, ew_ret=0.0,
+                  code_sha="abc1234")
+    df = tr.load_track_record(str(p))
+    assert df.iloc[0]["code_sha"] == "abc1234"
+
+
+def test_portfolio_return_weights_times_rets() -> None:
+    w = {"AAA": 0.5, "BBB": 0.3}                 # 0.2 implicit cash at 0 return
+    r = {"AAA": 0.10, "BBB": -0.05}
+    assert tr.portfolio_return(w, r) == pytest.approx(0.5 * 0.10 + 0.3 * -0.05)
+
+
+def test_portfolio_return_missing_ret_counts_as_cash() -> None:
+    w = {"AAA": 0.5, "BBB": 0.5}
+    r = {"AAA": 0.10}                            # BBB ret unknown -> contributes 0
+    assert tr.portfolio_return(w, r) == pytest.approx(0.05)
+
+
+def test_portfolio_return_empty_weights_is_none() -> None:
+    assert tr.portfolio_return({}, {"AAA": 0.1}) is None
+
+
+def test_challenger_weights_from_snapshot(tmp_path) -> None:
+    snap = tmp_path / "book_snapshot_challenger.json"
+    snap.write_text('{"targets": [{"symbol": "GOOG", "weight": 0.1, "price": 365.76},'
+                    ' {"symbol": "AMD", "weight": 0.2, "price": 466.38}]}')
+    assert tr.challenger_weights(str(snap)) == {"GOOG": 0.1, "AMD": 0.2}
+
+
+def test_challenger_weights_missing_file_is_empty(tmp_path) -> None:
+    assert tr.challenger_weights(str(tmp_path / "nope.json")) == {}
