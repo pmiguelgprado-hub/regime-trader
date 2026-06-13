@@ -1468,6 +1468,29 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
         tlog.log(tlog.main, "rebalance_target",
                  f"{o['symbol']}: {o['shares']}sh @ {o['price']:.2f} (w={o['weight']:.3f})")
 
+    # Gap 3 capacity check: a target that is a large % of a name's ADV$ is a fill of
+    # fantasy in small-cap tails. Log-only — never resizes the book mid-gate.
+    try:
+        from core.capacity import capacity_report, sector_cap_breaches, worst_offenders
+        cap_max = float(cs.get("max_pct_adv", 0.05))
+        rep = capacity_report(plan, frames, max_pct_adv=cap_max)
+        flagged = [r for r in rep if r["flagged"]]
+        if flagged:
+            top = worst_offenders(rep, 5)
+            tlog.log(tlog.main, "capacity_warn",
+                     f"{len(flagged)} target(s) > {cap_max:.0%} ADV; worst: "
+                     + ", ".join(f"{r['symbol']} {r['pct_adv']:.0%}" for r in top))
+        # T5.2 sector cap: log-only drift detector (selection enforces the cap; a
+        # breach here = realized book drifted, e.g. stale sector tags). Never resizes.
+        breaches = sector_cap_breaches([o["symbol"] for o in plan], load_sector_map(as_of=q_as_of),
+                                       float(cs.get("max_sector_fraction", 0.30)))
+        if breaches:
+            tlog.log(tlog.main, "sector_cap_warn",
+                     "realized sector share over cap: "
+                     + ", ".join(f"{s} {f:.0%}" for s, f in breaches.items()))
+    except Exception as exc:  # noqa: BLE001 - capacity logging must never break rebalance
+        logging.getLogger(__name__).warning("capacity check failed (non-fatal): %s", exc)
+
     # Current holdings (for the dashboard + the rebalance diff).
     held = {p["symbol"]: int(float(p["qty"])) for p in client.get_positions()}
 
