@@ -1368,6 +1368,31 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
                        make_row(str(feats.index[-1])[:10], vol_rank, jm.vol_rank()))
         except Exception as exc:  # noqa: BLE001 - shadow must never break the rebalance
             logging.getLogger(__name__).warning("shadow regime log failed (non-fatal): %s", exc)
+
+        # T1.3 macro risk-confirmation shadow (free VIX term structure + FRED HY OAS).
+        # Risk CONFIRMATION only — NEVER enters the HMM panel (that would mutate the
+        # frozen gate); logged separately for the shadow study.
+        try:
+            import csv as _csv
+
+            from data.macro_features import (fetch_fred_series, fetch_term_structure,
+                                             risk_confirmation)
+            ts = fetch_term_structure()
+            oas, _ = fetch_fred_series("BAMLH0A0HYM2")
+            score = risk_confirmation(ts["backwardation"], oas)
+            mpath = Path("logs/shadow_macro.csv")
+            new = not mpath.exists()
+            with open(mpath, "a", newline="") as f:
+                w = _csv.writer(f)
+                if new:
+                    w.writerow(["date", "vix_ratio", "backwardation", "hy_oas", "risk_confirm"])
+                w.writerow([str(feats.index[-1])[:10], round(ts["ratio"], 4),
+                            ts["backwardation"], oas, round(score, 4)])
+            tlog.log(tlog.main, "shadow_macro",
+                     f"vix_ratio={ts['ratio']:.2f} backwardation={ts['backwardation']} "
+                     f"hy_oas={oas} risk_confirm={score:.2f}")
+        except Exception as exc:  # noqa: BLE001 - shadow must never break the rebalance
+            logging.getLogger(__name__).warning("shadow macro log failed (non-fatal): %s", exc)
     tv = float(src.get("target_vol", 0.12))
     vw = int(src.get("vol_window", 126))
     gc = float(src.get("gross_cap", 1.0))
