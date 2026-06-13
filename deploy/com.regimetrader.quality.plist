@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  regime-trader QUALITY sleeve (EDGAR quality + momentum, vol-target) — T2.1.
+  Runs `main.py --rebalance --quality` daily L-F ~22:40 CEST (10 min after the
+  baseline rebalance) and writes book_snapshot_quality.json. Same cadence as the
+  baseline: monthly name rerank (1st run of a new month re-fetches EDGAR
+  fundamentals, cached), daily gross rescale via the vol-target overlay.
+
+  ALWAYS DRY-RUN. The sleeve has NO --execute path here and main.py forces dry-run
+  even if the flag is passed: the frozen baseline owns the shared paper account, and
+  two books submitting would fight over positions. The quality book's NAV is
+  synthesized by the daily recordtrack job marking its snapshot weights to market
+  (additive `quality_nav` column in track_record.csv — the gate feed). A true
+  parallel executing test needs a SEPARATE Alpaca paper account (T5.4, Pablo's gated
+  step). PAPER only; real money BLOCKED until the quality gate passes
+  (docs/analysis/2026-06-13-quality-edgar-prereg.md).
+
+  Install:
+    cp deploy/com.regimetrader.quality.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.regimetrader.quality.plist
+  Stop:
+    launchctl unload ~/Library/LaunchAgents/com.regimetrader.quality.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.regimetrader.quality</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/pablomiguelgonzalezprado/AIOS/projects/regime-trader/.venv/bin/python</string>
+    <string>main.py</string>
+    <string>--rebalance</string>
+    <string>--quality</string>
+  </array>
+
+  <!-- T0.4 determinism (R-4): multithreaded BLAS reductions are order-
+       nondeterministic; identical HMM fits diverged at ~5e-13 and EM amplified it.
+       Single-threaded numeric libs make fits bit-reproducible. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>OMP_NUM_THREADS</key><string>1</string>
+    <key>OPENBLAS_NUM_THREADS</key><string>1</string>
+    <key>MKL_NUM_THREADS</key><string>1</string>
+    <key>VECLIB_MAXIMUM_THREADS</key><string>1</string>
+  </dict>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/pablomiguelgonzalezprado/AIOS/projects/regime-trader</string>
+
+  <!-- Daily Mon-Fri at 22:40 local time (10 min after the baseline rebalance). -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>22</integer><key>Minute</key><integer>40</integer></dict>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>22</integer><key>Minute</key><integer>40</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>22</integer><key>Minute</key><integer>40</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>22</integer><key>Minute</key><integer>40</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>22</integer><key>Minute</key><integer>40</integer></dict>
+  </array>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/pablomiguelgonzalezprado/AIOS/projects/regime-trader/logs/quality.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/pablomiguelgonzalezprado/AIOS/projects/regime-trader/logs/quality.err.log</string>
+</dict>
+</plist>

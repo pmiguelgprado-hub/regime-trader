@@ -170,3 +170,35 @@ def test_ticker_to_cik_unknown_raises():
     fetch = lambda url: (200, '{"0": {"cik_str": 1, "ticker": "FOO", "title": "Foo"}}')
     with pytest.raises(KeyError):
         ed.ticker_to_cik("NOPE", fetch)
+
+
+# --- universe loader: on-disk cache + resilience ----------------------------------
+
+
+def test_load_blocks_caches_and_skips_refetch(tmp_path):
+    calls = {"n": 0}
+    tickers = '{"0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple"}}'
+
+    def fetch(url):
+        calls["n"] += 1
+        if "company_tickers" in url:
+            return 200, tickers
+        return 200, __import__("json").dumps(_facts_json())
+
+    blocks = ed.load_blocks(["AAPL"], fetch=fetch, cache_dir=str(tmp_path))
+    assert "AAPL" in blocks and blocks["AAPL"]["statements"]
+    first = calls["n"]
+    # second call hits the on-disk cache (no companyfacts refetch; tickers may re-resolve)
+    ed.load_blocks(["AAPL"], fetch=fetch, cache_dir=str(tmp_path))
+    assert calls["n"] - first <= 1
+
+
+def test_load_blocks_skips_unresolvable_ticker(tmp_path):
+    def fetch(url):
+        if "company_tickers" in url:
+            return 200, '{"0": {"cik_str": 1, "ticker": "AAPL", "title": "Apple"}}'
+        return 200, __import__("json").dumps(_facts_json())
+
+    # ZZZZ not in the mapping -> skipped, not fatal
+    blocks = ed.load_blocks(["AAPL", "ZZZZ"], fetch=fetch, cache_dir=str(tmp_path))
+    assert set(blocks) == {"AAPL"}

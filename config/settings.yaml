@@ -94,6 +94,20 @@ challenger:
   gross_floor: 0.0                  # min gross after vol-targeting
 
 # ---------------------------------------------------------------------------
+# quality — EDGAR quality(+momentum) sleeve (T2.1; --quality flag, own snapshot,
+#   ALWAYS dry-run + synthetic NAV until T5.4 2nd paper account). Frozen prereg:
+#   docs/analysis/2026-06-13-quality-edgar-prereg.md.
+# ---------------------------------------------------------------------------
+quality:
+  enabled: true                     # DEPLOYED 2026-06-13 (paper, dry-run); --quality flag drives the path
+  combine: quality_momentum         # quality | quality_momentum (variant B = combined)
+  overlay: vol_target               # none | hmm | vol_target | both (vol_target = prereg)
+  target_vol: 0.12                  # constant annualized vol target
+  vol_window: 126                   # trailing bars for the book's realized-vol estimate (~6mo)
+  gross_cap: 1.0                    # max gross after vol-targeting (1.0 = no leverage)
+  gross_floor: 0.0                  # min gross after vol-targeting
+
+# ---------------------------------------------------------------------------
 # hmm — Hidden Markov Model regime detection
 # ---------------------------------------------------------------------------
 hmm:

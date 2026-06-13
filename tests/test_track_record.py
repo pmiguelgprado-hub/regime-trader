@@ -143,3 +143,33 @@ def test_challenger_weights_from_snapshot(tmp_path) -> None:
 
 def test_challenger_weights_missing_file_is_empty(tmp_path) -> None:
     assert tr.challenger_weights(str(tmp_path / "nope.json")) == {}
+
+
+# --- quality book NAV (T2.1 deploy): same additive pattern as challenger ------------
+
+
+def test_quality_seeds_then_chains(tmp_path) -> None:
+    p = tmp_path / "track.csv"
+    tr.append_day(str(p), "2026-06-13", 100_000.0, spy_ret=0.0, ew_ret=0.0,
+                  quality_ret=0.03)
+    tr.append_day(str(p), "2026-06-14", 101_000.0, spy_ret=0.0, ew_ret=0.0,
+                  quality_ret=0.02)
+    df = tr.load_track_record(str(p))
+    assert df.iloc[0]["quality_nav"] == 100_000.0            # seed, ret not applied
+    assert df.iloc[-1]["quality_nav"] == pytest.approx(102_000.0)  # 100k * 1.02
+
+
+def test_quality_and_challenger_independent_columns(tmp_path) -> None:
+    p = tmp_path / "track.csv"
+    tr.append_day(str(p), "2026-06-13", 100_000.0, spy_ret=0.0, ew_ret=0.0,
+                  challenger_ret=0.05, quality_ret=0.01)
+    row = tr.load_track_record(str(p)).iloc[0]
+    assert row["challenger_nav"] == 100_000.0 and row["quality_nav"] == 100_000.0
+
+
+def test_snapshot_weights_alias_of_challenger_weights(tmp_path) -> None:
+    snap = tmp_path / "book_snapshot_quality.json"
+    snap.write_text('{"targets": [{"symbol": "AAPL", "weight": 0.2}]}')
+    assert tr.snapshot_weights(str(snap)) == {"AAPL": 0.2}
+    assert tr.snapshot_weights is tr.challenger_weights or \
+        tr.snapshot_weights(str(snap)) == tr.challenger_weights(str(snap))

@@ -40,7 +40,8 @@ from typing import Optional
 
 import pandas as pd
 
-COLUMNS = ["date", "book_nav", "spy_nav", "ew_nav", "challenger_nav", "code_sha"]
+COLUMNS = ["date", "book_nav", "spy_nav", "ew_nav", "challenger_nav", "quality_nav",
+           "code_sha"]
 
 
 def simple_return(prev: float, cur: float) -> float:
@@ -62,18 +63,22 @@ def portfolio_return(weights: dict[str, float], rets: dict[str, float]) -> Optio
     return sum(w * rets.get(sym, 0.0) for sym, w in weights.items())
 
 
-def challenger_weights(snapshot_path: str) -> dict[str, float]:
-    """Target weights from the challenger's dry-run book snapshot ({} if absent).
+def snapshot_weights(snapshot_path: str) -> dict[str, float]:
+    """Target weights from a dry-run book snapshot ({} if absent).
 
-    The challenger has no broker account of its own (DRY-RUN by design — see
-    deploy/com.regimetrader.challenger.plist), so its NAV must be synthesized by
-    marking the snapshot's target weights to market each day.
+    A dry-run sleeve (challenger, quality) has no broker account of its own — see
+    deploy/com.regimetrader.{challenger,quality}.plist — so its NAV is synthesized by
+    marking the snapshot's target weights to market each day (T0.1 / T2.1 gate feed).
     """
     p = Path(snapshot_path)
     if not p.exists():
         return {}
     snap = json.loads(p.read_text())
     return {t["symbol"]: float(t["weight"]) for t in snap.get("targets", [])}
+
+
+# Back-compat alias (the challenger feed predates the generic name).
+challenger_weights = snapshot_weights
 
 
 def staleness_bdays(path: str, today: str) -> Optional[int]:
@@ -114,6 +119,7 @@ def load_track_record(path: str) -> pd.DataFrame:
 def append_day(path: str, date: str, book_equity: float,
                spy_ret: float, ew_ret: float,
                challenger_ret: Optional[float] = None,
+               quality_ret: Optional[float] = None,
                code_sha: Optional[str] = None) -> None:
     """Append one day's NAV row, chaining the benchmark levels (idempotent on date).
 
@@ -136,6 +142,7 @@ def append_day(path: str, date: str, book_equity: float,
         ew_ret: Equal-weight benchmark one-day return — RSP ETF (from :func:`simple_return`).
         challenger_ret: Challenger book one-day return (from :func:`portfolio_return`),
             or ``None`` when no challenger snapshot is available.
+        quality_ret: Quality sleeve one-day return (same synthesis), or ``None``.
         code_sha: Short git SHA of the checked-out code that produced the row
             (T0.3 — launchd runs whatever is checked out; this makes drift auditable).
     """
@@ -144,20 +151,26 @@ def append_day(path: str, date: str, book_equity: float,
         return  # idempotent: same-day re-run is a no-op
     if df.empty:
         spy_nav = ew_nav = book_equity            # seed all three equal on day 1
-        prev_ch = None
+        last = None
     else:
         last = df.iloc[-1]
         spy_nav = float(last["spy_nav"]) * (1.0 + spy_ret)
         ew_nav = float(last["ew_nav"]) * (1.0 + ew_ret)
-        prev_ch = last["challenger_nav"]
-    if challenger_ret is None:
-        ch_nav = None                             # gap day: record NaN, not fake 0%
-    elif prev_ch is None or pd.isna(prev_ch):
-        ch_nav = book_equity                      # (re-)seed at adoption, ret not applied
-    else:
-        ch_nav = float(prev_ch) * (1.0 + challenger_ret)
+
+    def _synthetic_nav(ret: Optional[float], col: str) -> Optional[float]:
+        # Dry-run sleeve NAV: gap (None) -> NaN; first obs or post-gap -> (re)seed at book
+        # equity (can't chain from NaN); else compound the prior level by the day's return.
+        prev = None if last is None else last[col]
+        if ret is None:
+            return None
+        if prev is None or pd.isna(prev):
+            return book_equity
+        return float(prev) * (1.0 + ret)
+
+    ch_nav = _synthetic_nav(challenger_ret, "challenger_nav")
+    q_nav = _synthetic_nav(quality_ret, "quality_nav")
     row = {"date": date, "book_nav": book_equity, "spy_nav": spy_nav, "ew_nav": ew_nav,
-           "challenger_nav": ch_nav, "code_sha": code_sha}
+           "challenger_nav": ch_nav, "quality_nav": q_nav, "code_sha": code_sha}
     out = pd.concat([df, pd.DataFrame([row], columns=COLUMNS)], ignore_index=True)
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(path, index=False)

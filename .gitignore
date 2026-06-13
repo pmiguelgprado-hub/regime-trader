@@ -46,6 +46,7 @@ data/cache/
 state_snapshot.json
 book_snapshot.json
 book_snapshot_challenger.json
+book_snapshot_quality.json
 trading_halted.lock
 # accumulating daily NAV series (book/EW-S&P500/SPY) — persists on disk, not in git
 track_record.csv

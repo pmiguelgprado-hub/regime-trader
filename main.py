@@ -45,6 +45,7 @@ import yaml
 STATE_SNAPSHOT = "state_snapshot.json"
 BOOK_SNAPSHOT = "book_snapshot.json"
 BOOK_SNAPSHOT_CHALLENGER = "book_snapshot_challenger.json"
+BOOK_SNAPSHOT_QUALITY = "book_snapshot_quality.json"
 TRACK_RECORD_CSV = "track_record.csv"
 MODEL_DIR = "models"
 HMM_MAX_AGE_DAYS = 7
@@ -1214,7 +1215,8 @@ def run_once(config: dict[str, Any], credentials: dict[str, str],
 def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
                   dry_run: bool = True,
                   universe_limit: Optional[int] = None,
-                  challenger: bool = False) -> list[dict]:  # pragma: no cover - live broker/market
+                  challenger: bool = False,
+                  quality: bool = False) -> list[dict]:  # pragma: no cover - live broker/market
     """Compute (and, when un-gated, submit) the cross-sectional book rebalance (vía C).
 
     The monthly paper entry point for the cross-sectional return-predictor book: load
@@ -1258,6 +1260,14 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
     from monitoring.logger import LoggerConfig, setup_logging
 
     tlog = setup_logging(LoggerConfig(log_dir="logs"))
+    # Isolation invariant (roadmap §0): a new sleeve never trades the shared account —
+    # the frozen baseline owns it, and both submitting would fight over positions. The
+    # quality sleeve is dry-run + synthetic NAV (challenger pattern) until it has its own
+    # paper account (T5.4). Force dry-run regardless of the flag; never silently execute.
+    if quality and not dry_run:
+        dry_run = True
+        tlog.log(tlog.main, "quality_dryrun_forced",
+                 "quality sleeve forced to dry-run (no separate paper account; T5.4)")
     cs = config.get("cross_sectional", {})
     _, strat_cfg, _ = _core_configs(config)
     proxy = cs.get("proxy", "SPY")
@@ -1310,7 +1320,8 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
     # of a new calendar month; on intra-month daily runs keep the month's names and only
     # re-scale total gross to today's market vol via the overlay (de-risk on vol spikes,
     # re-risk on calm). "Attentive every day" = daily risk management, monthly name turnover.
-    snap_path = BOOK_SNAPSHOT_CHALLENGER if challenger else BOOK_SNAPSHOT
+    snap_path = (BOOK_SNAPSHOT_QUALITY if quality else
+                 BOOK_SNAPSHOT_CHALLENGER if challenger else BOOK_SNAPSHOT)
     month_key = f"{datetime.now(timezone.utc):%Y-%m}"
     prior_sel: list[str] = []
     prior_month = None
@@ -1321,8 +1332,9 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
             prior_month = prior.get("selection_month")
         except Exception:
             prior_sel, prior_month = [], None
-    src = config.get("challenger", {}) if challenger else cs
-    ov = str(src.get("overlay", "vol_target" if challenger else "hmm"))
+    src = (config.get("quality", {}) if quality else
+           config.get("challenger", {}) if challenger else cs)
+    ov = str(src.get("overlay", "vol_target" if (challenger or quality) else "hmm"))
     # Fuzzy layer: hmm_prob swaps the argmax rank for the posterior-weighted rank
     # (continuous de-risking, no cliff); every other mode keeps the argmax rank
     # untouched. Hazard/entropy are recorded for the dashboard either way.
@@ -1351,6 +1363,32 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
             max_single=max_single, max_concurrent=max_concurrent,
         )
         selected_symbols = prior_sel
+    elif quality:
+        # Quality(+momentum) sleeve (T2.1). Monthly rerank only — fundamentals are
+        # fetched (EDGAR, cached) once a month here; intra-month days take the
+        # reuse_selection branch above and need no fundamentals. Drop-in: the EDGAR
+        # block shape equals the old SimFin stub, so make_book_weights_quality is
+        # unchanged. Isolation: own snapshot, never --execute on the shared account.
+        from core.quality_ranking import make_book_weights_quality
+        from data.edgar_data import load_blocks
+        q = config.get("quality", {})
+        blocks = load_blocks(universe)
+        tlog.log(tlog.main, "quality_fundamentals",
+                 f"EDGAR blocks for {len(blocks)}/{len(universe)} names "
+                 f"(coverage {len(blocks) / max(1, len(universe)):.0%})")
+        weight_fn = make_book_weights_quality(
+            frames, blocks, lookback=lookback, skip=skip, frac=frac,
+            max_single=max_single, max_concurrent=max_concurrent,
+            combine=str(q.get("combine", "quality_momentum")),
+            overlay=ov,
+            target_vol=tv, vol_window=vw, gross_cap=gc, gross_floor=gf,
+            risk_on_gross=float(cs.get("risk_on_gross", 1.0)),
+            risk_off_gross=float(cs.get("risk_off_gross", 0.5)),
+            weighting=str(cs.get("weighting", "equal")),
+            sector_map=load_sector_map(),
+            max_sector_frac=float(cs.get("max_sector_fraction", 0.30)),
+        )
+        targets = weight_fn(pd.Timestamp.now(tz=timezone.utc), vol_rank)
     elif challenger:
         ch = config.get("challenger", {})
         targets = compute_book_targets_challenger(
@@ -1440,7 +1478,7 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
     # double-gated: orders need BOTH --execute (not dry_run) AND allow_orders: true.
     hedge_out: dict = {"action": "disabled"}
     oh = config.get("options_hedge", {}) or {}
-    if bool(oh.get("enabled", False)) and not challenger:
+    if bool(oh.get("enabled", False)) and not challenger and not quality:
         try:
             from alpaca.data.historical.option import OptionHistoricalDataClient
 
@@ -1468,7 +1506,7 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
     # Persist the book snapshot for the dashboard (dry-run writes it too).
     snapshot = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "book": "challenger" if challenger else "baseline",
+        "book": "quality" if quality else "challenger" if challenger else "baseline",
         "mode": "PAPER" if paper else "LIVE",
         "dry_run": dry_run,
         "selection_month": month_key,
@@ -1486,7 +1524,6 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
         "held": [{"symbol": s, "shares": q} for s, q in sorted(held.items())],
         "executed": executed,
     }
-    snap_path = BOOK_SNAPSHOT_CHALLENGER if challenger else BOOK_SNAPSHOT
     Path(snap_path).write_text(json.dumps(snapshot, indent=2, default=str))
     tlog.log(tlog.main, "book_snapshot", f"wrote {snap_path}")
     return plan
@@ -1533,18 +1570,23 @@ def run_record_track(config: dict[str, Any], credentials: dict[str, str],
     spy_ret, date = _last_ret(proxy)
     ew_ret, _ = _last_ret(ew_proxy)
 
-    # T0.1 challenger gate feed: synthesize the dry-run challenger's daily return by
-    # marking its snapshot target weights to market (it has no broker account of its own).
-    ch_weights = tr.challenger_weights(BOOK_SNAPSHOT_CHALLENGER)
-    ch_ret: "Optional[float]" = None
-    if ch_weights:
-        ch_rets: dict[str, float] = {}
-        for sym in ch_weights:
+    # Dry-run sleeve gate feed (T0.1 challenger, T2.1 quality): synthesize each sleeve's
+    # daily return by marking its snapshot target weights to market — neither has a broker
+    # account of its own (challenger pattern). A name with no bar contributes 0 (cash).
+    def _sleeve_ret(snapshot_path: str, label: str) -> "Optional[float]":
+        weights = tr.snapshot_weights(snapshot_path)
+        if not weights:
+            return None
+        rets: dict[str, float] = {}
+        for sym in weights:
             try:
-                ch_rets[sym] = _last_ret(sym)[0]
+                rets[sym] = _last_ret(sym)[0]
             except Exception as exc:                      # missing bar -> cash (0) that day
-                tlog.log(tlog.main, "track_record", f"challenger ret fetch failed {sym}: {exc}")
-        ch_ret = tr.portfolio_return(ch_weights, ch_rets)
+                tlog.log(tlog.main, "track_record", f"{label} ret fetch failed {sym}: {exc}")
+        return tr.portfolio_return(weights, rets)
+
+    ch_ret = _sleeve_ret(BOOK_SNAPSHOT_CHALLENGER, "challenger")
+    q_ret = _sleeve_ret(BOOK_SNAPSHOT_QUALITY, "quality")
 
     # T0.3 evidence audit trail: which checked-out code produced this row.
     try:
@@ -1555,10 +1597,11 @@ def run_record_track(config: dict[str, Any], credentials: dict[str, str],
         code_sha = None
 
     tr.append_day(path, date, equity, spy_ret, ew_ret,
-                  challenger_ret=ch_ret, code_sha=code_sha)
+                  challenger_ret=ch_ret, quality_ret=q_ret, code_sha=code_sha)
     tlog.log(tlog.main, "track_record",
              f"{date} book={equity:.0f} spy_ret={spy_ret:+.4f} ew_ret={ew_ret:+.4f} "
              f"challenger_ret={'n/a' if ch_ret is None else f'{ch_ret:+.4f}'} "
+             f"quality_ret={'n/a' if q_ret is None else f'{q_ret:+.4f}'} "
              f"sha={code_sha} -> {path}",
              mode="PAPER" if paper else "LIVE")
 
@@ -1568,6 +1611,7 @@ def run_record_track(config: dict[str, Any], credentials: dict[str, str],
         "track_record": path,
         "book_snapshot": BOOK_SNAPSHOT,
         "book_snapshot_challenger": BOOK_SNAPSHOT_CHALLENGER,
+        "book_snapshot_quality": BOOK_SNAPSHOT_QUALITY,
         "champion_sha_SPY": f"{MODEL_DIR}/SPY/champion_sha.txt",
     })
     if row is not None:
@@ -1877,6 +1921,10 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
                         help="with --rebalance: run the residual-momentum + vol-target "
                              "challenger book (parallel to the frozen baseline; GATED, "
                              "writes a separate snapshot)")
+    parser.add_argument("--quality", action="store_true",
+                        help="with --rebalance: run the EDGAR quality(+momentum) sleeve "
+                             "(T2.1; parallel, own snapshot, ALWAYS dry-run + synthetic "
+                             "NAV until a 2nd paper account exists — never executes)")
 
     parser.add_argument("--compare", action="store_true", help="add benchmark comparison (backtest)")
     parser.add_argument("--symbols", nargs="+", default=None,
@@ -1910,7 +1958,8 @@ def main(argv: Optional[list[str]] = None) -> None:
         run_once(config, load_credentials())
     elif args.rebalance:
         run_rebalance(config, load_credentials(), dry_run=not args.execute,
-                      universe_limit=args.limit, challenger=args.challenger)
+                      universe_limit=args.limit, challenger=args.challenger,
+                      quality=args.quality)
     elif args.record_track:
         run_record_track(config, load_credentials())
     elif args.risk_check:

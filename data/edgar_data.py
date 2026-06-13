@@ -35,6 +35,7 @@ from __future__ import annotations
 import json
 import os
 import urllib.request
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 # (status_code, body_text) <- url
@@ -91,15 +92,11 @@ def ticker_to_cik(ticker: str, fetch: Fetcher = _default_fetch) -> str:
         KeyError: If the ticker is not in SEC's list.
         RuntimeError: On a non-200 response.
     """
-    status, body = fetch(TICKERS_URL)
-    if status != 200:
-        raise RuntimeError(f"SEC tickers fetch failed: HTTP {status}")
-    table = json.loads(body)
-    want = ticker.strip().upper()
-    for row in table.values():
-        if str(row.get("ticker", "")).upper() == want:
-            return f"{int(row['cik_str']):010d}"
-    raise KeyError(f"ticker not found in SEC mapping: {ticker}")
+    table = _cik_table(fetch)
+    try:
+        return table[ticker.strip().upper()]
+    except KeyError:
+        raise KeyError(f"ticker not found in SEC mapping: {ticker}")
 
 
 def company_facts(cik: str, fetch: Fetcher = _default_fetch) -> dict:
@@ -112,6 +109,64 @@ def company_facts(cik: str, fetch: Fetcher = _default_fetch) -> dict:
     if status != 200:
         raise RuntimeError(f"SEC companyfacts fetch failed for {cik}: HTTP {status}")
     return json.loads(body)
+
+
+def _cik_table(fetch: Fetcher) -> dict[str, str]:
+    """Ticker (upper) -> 10-digit CIK, from SEC's mapping file (fetched once)."""
+    status, body = fetch(TICKERS_URL)
+    if status != 200:
+        raise RuntimeError(f"SEC tickers fetch failed: HTTP {status}")
+    return {str(r["ticker"]).upper(): f"{int(r['cik_str']):010d}"
+            for r in json.loads(body).values()}
+
+
+def load_blocks(symbols: list[str], fetch: Fetcher = _default_fetch,
+                cache_dir: str = "data/cache/edgar",
+                rate_limit_s: float = 0.12) -> dict[str, dict]:
+    """Load SimFin-shaped fundamental blocks for a universe, with on-disk cache.
+
+    The monthly-rebalance path's only network-heavy step (~500 companyfacts fetches).
+    Each company's raw JSON is cached under ``cache_dir`` so intra-month / repeated
+    runs do not refetch (and so a partial SEC outage degrades gracefully — a name
+    that can't be fetched or resolved is skipped, never fatal). Daily intra-month
+    runs reuse the prior selection and need no fundamentals at all.
+
+    Args:
+        symbols: Tickers to load.
+        fetch: Injected HTTP getter.
+        cache_dir: Directory for per-CIK companyfacts JSON.
+        rate_limit_s: Sleep between live fetches (SEC ~10 req/s).
+
+    Returns:
+        ``{symbol: company_block}`` for every symbol successfully resolved + fetched.
+    """
+    import time
+
+    cdir = Path(cache_dir)
+    cdir.mkdir(parents=True, exist_ok=True)
+    try:
+        table = _cik_table(fetch)
+    except Exception as exc:  # noqa: BLE001 - whole universe unresolvable -> empty, logged upstream
+        return {}
+    out: dict[str, dict] = {}
+    for sym in symbols:
+        cik = table.get(sym.strip().upper())
+        if not cik:
+            continue                                  # not an SEC filer (skip, not fatal)
+        cache_f = cdir / f"CIK{cik}.json"
+        try:
+            if cache_f.exists() and cache_f.stat().st_size > 0:
+                facts = json.loads(cache_f.read_text())
+            else:
+                facts = company_facts(cik, fetch)
+                cache_f.write_text(json.dumps(facts))
+                time.sleep(rate_limit_s)
+            block = to_company_block(facts)
+            if block["statements"]:
+                out[sym] = block
+        except Exception:  # noqa: BLE001 - one bad name must not sink the universe
+            continue
+    return out
 
 
 def _concept_series(facts: dict, tags: list[str]) -> list[dict]:

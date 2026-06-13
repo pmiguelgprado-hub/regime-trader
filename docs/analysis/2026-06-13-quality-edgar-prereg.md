@@ -1,8 +1,9 @@
 ---
 type: prereg
-status: draft          # -> frozen cuando Pablo revise FREEZE CHECKLIST §8 y commitee con status: frozen
+status: frozen         # CONGELADO 2026-06-13 (despliegue automático Pablo "/goal pasalo ya al bot real")
 tags: [regime-trader, prereg, quality, edgar, free-data]
 created: 2026-06-13
+frozen: 2026-06-13
 related: ["[[2026-06-12-improvement-roadmap]]", "[[2026-06-05-idio-momentum-challenger-prereg]]", "[[2026-06-04-cross-sectional-prereg]]"]
 ---
 
@@ -11,9 +12,12 @@ related: ["[[2026-06-12-improvement-roadmap]]", "[[2026-06-05-idio-momentum-chal
 **Trial id (ledger):** `20260613-930e9f` · **configs cargadas:** 2 ·
 **n_trials familia 'quality' tras este cargo:** 2
 
-> BORRADOR. Congela al commitear con `status: frozen` tras revisar la FREEZE
-> CHECKLIST (§8). Después de eso, cualquier cambio = enmienda nueva con su propio
-> cargo en el ledger. El reloj de 12 meses NO empieza hasta el congelado.
+> **CONGELADO 2026-06-13.** Desplegado en paper bajo el mandato de Pablo
+> ("pásalo ya al bot real"). Defaults de los knobs resueltos por el agente y
+> EXPUESTOS para veto (§1, §8) — dinero real BLOQUEADO, así que Pablo puede
+> revertir/enmendar knobs en la próxima sesión con ~cero datos perdidos. Tras el
+> congelado, cualquier cambio = enmienda nueva con su propio cargo en el ledger.
+> El reloj de 12 meses empieza HOY (primera fila `quality_nav` en track_record).
 
 ## 0. Qué se está validando
 
@@ -49,8 +53,12 @@ survivorship-biased hasta T5.3). Evidencia primaria = forward paper.
 | Fundamentales | EDGAR companyfacts, anual (fp=FY), first-filed-only | `data/edgar_data.py` |
 
 **Variantes preregistradas = 2** (cargadas en ledger): **(A)** `combine="quality"`
-(calidad sola) y **(B)** `combine="quality_momentum"` (default). Ningún otro knob se
-sweepea; cualquier barrido posterior = multiple-testing → enmienda + cargo nuevo.
+(calidad sola) y **(B)** `combine="quality_momentum"` (default). **DESPLEGADA = B**
+(una sola cuenta paper → un solo libro/snapshot vivo; A es la alternativa
+preregistrada NO corrida en paralelo hasta T5.4). n_trials=2 es deliberadamente
+**conservador**: B se eligió sobre A por teoría (AQR value+momentum), no por datos,
+y aun así el DSR corrige por 2 (no nos damos crédito por la elección). Ningún otro
+knob se sweepea; cualquier barrido posterior = multiple-testing → enmienda + cargo.
 
 ## 2. Datos y medición
 
@@ -106,20 +114,25 @@ calidad disfrazada; el cap sector y la comparación maxDD lo testean.
 - Datos: `data/edgar_data.py` (`ticker_to_cik`, `company_facts`, `to_company_block`).
 - Features: `core/fundamental_features.py` (sin cambios — drop-in).
 - Construcción: `core/quality_ranking.py::make_book_weights_quality` (sin cambios).
-- **PENDIENTE de cablear (gated, §8):** `main.run_rebalance --quality` (nuevo flag,
-  patrón `--challenger`), `book_snapshot_quality.json`, columna `quality_nav` en
-  `core/track_record.py::append_day`, `deploy/com.regimetrader.quality.plist`,
-  cargo de fundamentales EDGAR del universo en el path de rebalance.
-- Commit SHA al congelar: `<rellenar al freeze>`.
+- **CABLEADO (2026-06-13):** `main.run_rebalance --quality` (flag, patrón `--challenger`,
+  fuerza dry-run — jamás `--execute` en la cuenta compartida), `book_snapshot_quality.json`,
+  columna `quality_nav` en `core/track_record.py::append_day` (síntesis mark-to-market en
+  `run_record_track`), `deploy/com.regimetrader.quality.plist` (diario L-V 22:40),
+  `data/edgar_data.py::load_blocks` (universo, cache `data/cache/edgar/`).
+- Commit SHA al congelar: ver git (commit con `status: frozen`); tag opcional `gate-quality-2026-06-13`.
 
-## 8. FREEZE CHECKLIST (revisión supervisada de Pablo)
+## 8. FREEZE CHECKLIST — RESUELTA (despliegue agente 2026-06-13)
 
-Antes de poner `status: frozen` y arrancar el reloj:
+- [x] Knobs §1 comprometidos (defaults del agente, EXPUESTOS para veto de Pablo).
+- [x] Variantes: A=`quality`, B=`quality_momentum`; **B desplegada** (1 cuenta), n_trials=2 conservador.
+- [x] Umbrales §4: DSR>0.5, PBO<0.5, cobertura≥60%.
+- [x] Libro cableado + verificado live: rerank full-universe **501/503 cobertura EDGAR
+      (99.6% ≫ 60%)**, 48 nombres, gross 0.54, snapshot propio, baseline intacto,
+      `quality_nav` sintetizado en track_record (verificado +0.06% una fila).
+- [x] Cuenta: **synthetic mark-to-market** (forzado por restricción — sin 2ª cuenta;
+      2ª cuenta = T5.4, trigger = primera sleeve activa, que es ESTA).
+- [x] Congelado con `status: frozen` + cargo confirmado en ledger (quality=2).
 
-- [ ] Revisar los knobs §1 — ¿son estos los valores que quieres comprometer 12 meses?
-- [ ] Decidir las 2 variantes §1 (¿calidad-sola + combinada, u otras dos?).
-- [ ] Confirmar umbrales de aceptación §4 (DSR>0.5, PBO<0.5, cobertura≥60%).
-- [ ] Cablear el libro (§7 PENDIENTE) + verificar submission multi-nombre supervisada
-      (lección [[feedback-test-the-requirement]]: bot mudo por cableado muerto).
-- [ ] ¿Cuenta 2 paper (T5.4) o synthetic mark-to-market hasta entonces?
-- [ ] Commit con SHA registrado + `status: frozen` + cargo confirmado en ledger.
+**Veto disponible para Pablo (sin coste — dinero real bloqueado):** cambiar variante
+desplegada (A↔B), overlay, umbrales, o pausar el plist. Cualquier cambio post-hoy =
+enmienda + cargo nuevo en el ledger.
