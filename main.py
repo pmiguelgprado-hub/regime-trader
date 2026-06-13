@@ -2023,6 +2023,9 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     mode.add_argument("--label-trades", action="store_true", dest="label_trades",
                       help="triple-barrier label the book's matured monthly cohort "
                            "into logs/trade_labels.csv (T3.1; schedule monthly, no orders)")
+    mode.add_argument("--postmortem", action="store_true", dest="postmortem",
+                      help="generate the monthly postmortem report (T4.5; read-only "
+                           "summary of books/gates/shadow/alerts)")
     mode.add_argument("--live", action="store_true", help="paper/live trading loop (default)")
 
     parser.add_argument("--execute", action="store_true",
@@ -2092,6 +2095,33 @@ def main(argv: Optional[list[str]] = None) -> None:
         print(f"shadow report -> {out}")
     elif args.label_trades:
         run_label_trades(config, load_credentials())
+    elif args.postmortem:
+        from core import research_ledger as rl
+        from core.postmortem import monthly_postmortem_markdown
+        from core.shadow_regime import monthly_report
+        from core.track_record import load_track_record
+        month = (args.end or datetime.now(timezone.utc).date().isoformat())[:7]
+        track = load_track_record(TRACK_RECORD_CSV)
+        if not track.empty:
+            track = track[track["date"].astype(str).str.startswith(month)]
+        ledger_counts = {fam: rl.n_trials(family=fam)
+                         for fam in ("momentum", "quality", "hedge", "regime", "sentiment")
+                         if rl.n_trials(family=fam) > 0}
+        alert_counts: dict[str, int] = {}
+        alog = Path("logs/alerts.log")
+        if alog.exists():
+            for line in alog.read_text().splitlines():
+                if month in line:
+                    for key in ("data_quality", "champion_drift", "track_record_stale",
+                                "circuit_breaker", "intraday_derisk", "intraday_flatten"):
+                        if key in line:
+                            alert_counts[key] = alert_counts.get(key, 0) + 1
+        md = monthly_postmortem_markdown(month, track, ledger_counts, alert_counts,
+                                         monthly_report("logs/shadow_regime.csv", month))
+        out = Path(f"docs/analysis/{month}-postmortem.md")
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(md)
+        print(f"postmortem -> {out}")
     else:  # default: live
         run_live(config, load_credentials())
 
