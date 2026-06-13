@@ -1355,6 +1355,19 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
                               orch.vol_rank)
     entropy = predictive_entropy_norm(last.state_probabilities,
                                       hmm.get_transition_matrix())
+
+    # T1.1 shadow regime log (baseline run only; shadow-only, never touches orders):
+    # fit the Jump Model on the same panel and record HMM-vs-JM vol-rank agreement.
+    if not challenger and not quality:
+        try:
+            from core.jump_model import JumpModel
+            from core.shadow_regime import append_row, make_row
+            jm = JumpModel(n_states=hmm.n_regimes, jump_penalty=30.0,
+                           random_state=42).fit(feats)
+            append_row("logs/shadow_regime.csv",
+                       make_row(str(feats.index[-1])[:10], vol_rank, jm.vol_rank()))
+        except Exception as exc:  # noqa: BLE001 - shadow must never break the rebalance
+            logging.getLogger(__name__).warning("shadow regime log failed (non-fatal): %s", exc)
     tv = float(src.get("target_vol", 0.12))
     vw = int(src.get("vol_window", 126))
     gc = float(src.get("gross_cap", 1.0))
@@ -1937,6 +1950,9 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     mode.add_argument("--verify-evidence", action="store_true", dest="verify_evidence",
                       help="walk the evidence hash-chain and report the first "
                            "broken link, if any (gap-6 tamper-evidence audit)")
+    mode.add_argument("--shadow-report", action="store_true", dest="shadow_report",
+                      help="generate the monthly HMM-vs-JumpModel shadow regime "
+                           "report from logs/shadow_regime.csv (T1.4)")
     mode.add_argument("--live", action="store_true", help="paper/live trading loop (default)")
 
     parser.add_argument("--execute", action="store_true",
@@ -1996,6 +2012,14 @@ def main(argv: Optional[list[str]] = None) -> None:
         print(f"evidence chain: {'OK' if ok else f'BROKEN at row {bad}'} ({EVIDENCE_CHAIN})")
         if not ok:
             raise SystemExit(1)
+    elif args.shadow_report:
+        from core.shadow_regime import monthly_report, report_markdown
+        month = (args.end or datetime.now(timezone.utc).date().isoformat())[:7]
+        md = report_markdown(monthly_report("logs/shadow_regime.csv", month))
+        out = Path(f"docs/analysis/{month}-shadow-regime-report.md")
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(md)
+        print(f"shadow report -> {out}")
     else:  # default: live
         run_live(config, load_credentials())
 
