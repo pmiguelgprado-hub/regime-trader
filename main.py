@@ -1305,7 +1305,15 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
     # posterior-weighted rank; every legacy mode keeps the argmax rank).
 
     # Universe history -> cross-sectional rank -> top-decile targets -> share plan.
-    universe = load_sp500()
+    # T5.3 point-in-time: the quality sleeve's prereg promises a PIT universe, so it
+    # resolves the monthly snapshot at/before today (survivorship-free going forward).
+    # The frozen baseline/challenger keep the current CSV their preregs specify — never
+    # mutate a frozen book's universe mid-gate (roadmap §0).
+    q_as_of = datetime.now(timezone.utc).date().isoformat() if quality else None
+    if quality:                                         # freeze this month's PIT universe once
+        from data.constituents import ensure_snapshot
+        ensure_snapshot(f"{datetime.now(timezone.utc):%Y-%m}")
+    universe = load_sp500(as_of=q_as_of)
     if universe_limit:                                  # safe-test override (small universe)
         universe = universe[:universe_limit]
     # The challenger's residual signal estimates beta over a long est_window (504) BEFORE
@@ -1385,7 +1393,7 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
             risk_on_gross=float(cs.get("risk_on_gross", 1.0)),
             risk_off_gross=float(cs.get("risk_off_gross", 0.5)),
             weighting=str(cs.get("weighting", "equal")),
-            sector_map=load_sector_map(),
+            sector_map=load_sector_map(as_of=q_as_of),
             max_sector_frac=float(cs.get("max_sector_fraction", 0.30)),
         )
         targets = weight_fn(pd.Timestamp.now(tz=timezone.utc), vol_rank)
