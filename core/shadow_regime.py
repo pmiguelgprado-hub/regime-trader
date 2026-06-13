@@ -19,15 +19,21 @@ from typing import Optional
 
 import pandas as pd
 
-COLUMNS = ["date", "hmm_vol_rank", "jm_vol_rank", "agree", "next_ret"]
+COLUMNS = ["date", "hmm_vol_rank", "jm_vol_rank", "agree", "bocpd_cp", "next_ret"]
 
 
 def make_row(date: str, hmm_vol_rank: float, jm_vol_rank: float,
-             next_ret: Optional[float] = None) -> dict:
-    """One shadow row; ``agree`` = both engines on the same side of risk-on/off (0.5)."""
+             bocpd_cp: Optional[float] = None, next_ret: Optional[float] = None) -> dict:
+    """One shadow row.
+
+    ``agree`` = both engines on the same side of risk-on/off (0.5). ``bocpd_cp`` is
+    the model-free BOCPD changepoint probability (T1.2), a corroborator of the
+    regime hazard — logged, never acted on.
+    """
     agree = (hmm_vol_rank < 0.5) == (jm_vol_rank < 0.5)
     return {"date": date, "hmm_vol_rank": round(float(hmm_vol_rank), 4),
             "jm_vol_rank": round(float(jm_vol_rank), 4), "agree": bool(agree),
+            "bocpd_cp": None if bocpd_cp is None else round(float(bocpd_cp), 4),
             "next_ret": next_ret}
 
 

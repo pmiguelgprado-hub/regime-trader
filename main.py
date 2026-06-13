@@ -1360,12 +1360,15 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
     # fit the Jump Model on the same panel and record HMM-vs-JM vol-rank agreement.
     if not challenger and not quality:
         try:
+            from core.changepoint import changepoint_score
             from core.jump_model import JumpModel
             from core.shadow_regime import append_row, make_row
             jm = JumpModel(n_states=hmm.n_regimes, jump_penalty=30.0,
                            random_state=42).fit(feats)
+            # T1.2 model-free changepoint corroborator on proxy daily returns.
+            cp = changepoint_score(proxy_hist["close"].pct_change().dropna().to_numpy())
             append_row("logs/shadow_regime.csv",
-                       make_row(str(feats.index[-1])[:10], vol_rank, jm.vol_rank()))
+                       make_row(str(feats.index[-1])[:10], vol_rank, jm.vol_rank(), bocpd_cp=cp))
         except Exception as exc:  # noqa: BLE001 - shadow must never break the rebalance
             logging.getLogger(__name__).warning("shadow regime log failed (non-fatal): %s", exc)
 
