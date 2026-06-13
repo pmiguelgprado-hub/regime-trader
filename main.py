@@ -1570,6 +1570,24 @@ def run_record_track(config: dict[str, Any], credentials: dict[str, str],
     spy_ret, date = _last_ret(proxy)
     ew_ret, _ = _last_ret(ew_proxy)
 
+    # Gap 5 data-quality sentinel: a stale feed / split error / NaN day on the benchmark
+    # series silently corrupts the gate evidence. Check before the row lands; alert, never
+    # auto-correct (patching would itself contaminate the gate).
+    try:
+        from core import data_quality as dq
+        from monitoring.alerts import AlertConfig, AlertManager, AlertSeverity
+        sentinel_issues = []
+        for sym in (proxy, ew_proxy):
+            sentinel_issues += dq.check_price_series(sym, md.get_history(sym, timeframe, 30), date)
+        if sentinel_issues:
+            alerts = AlertManager(_build_dataclass(AlertConfig, config.get("monitoring", {})),
+                                  trading_logger=tlog)
+            alerts.send("data_quality", f"track-record data issues {dq.summary(sentinel_issues)}: "
+                        + "; ".join(f"{i.symbol}/{i.kind}: {i.detail}" for i in sentinel_issues),
+                        AlertSeverity.WARNING)
+    except Exception as exc:  # noqa: BLE001 - the sentinel must never block the recorder
+        logging.getLogger(__name__).warning("data-quality sentinel failed (non-fatal): %s", exc)
+
     # Dry-run sleeve gate feed (T0.1 challenger, T2.1 quality): synthesize each sleeve's
     # daily return by marking its snapshot target weights to market — neither has a broker
     # account of its own (challenger pattern). A name with no bar contributes 0 (cash).
