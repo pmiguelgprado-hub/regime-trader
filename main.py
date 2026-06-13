@@ -1550,6 +1550,73 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
     return plan
 
 
+TRADE_LABELS_CSV = "logs/trade_labels.csv"
+
+
+def run_label_trades(config: dict[str, Any], credentials: dict[str, str],
+                     book: str = "baseline") -> None:  # pragma: no cover - live broker/market
+    """Triple-barrier label the book's matured monthly cohort (T3.1 accumulation).
+
+    Reads the book snapshot's selected names + selection month; once that cohort is
+    at least ``max_hold`` bars old, fetches each name's forward path from its entry
+    and labels it (profit-take / stop-loss / time) into ``logs/trade_labels.csv``.
+    Idempotent (dedup on entry_date+symbol). Builds the training set for the gated
+    secondary model — which is fit only at >=200 round-trips, under its own prereg.
+    Schedule monthly. No orders.
+    """
+    from broker.alpaca_client import AlpacaClient, AlpacaConfig
+    from core import meta_labeling as ml
+    from data.market_data import MarketData
+    from monitoring.logger import LoggerConfig, setup_logging
+
+    tlog = setup_logging(LoggerConfig(log_dir="logs"))
+    mlc = config.get("meta_labeling", {})
+    pt = float(mlc.get("pt", 0.10)); sl = float(mlc.get("sl", 0.10))
+    max_hold = int(mlc.get("max_hold", 21))
+    timeframe = config.get("broker", {}).get("timeframe", "1Day")
+
+    snap_path = {"baseline": BOOK_SNAPSHOT, "challenger": BOOK_SNAPSHOT_CHALLENGER,
+                 "quality": BOOK_SNAPSHOT_QUALITY}.get(book, BOOK_SNAPSHOT)
+    if not Path(snap_path).exists():
+        tlog.log(tlog.main, "label_trades", f"no snapshot {snap_path}; nothing to label")
+        return
+    snap = json.loads(Path(snap_path).read_text())
+    names = [s for s in (snap.get("selected_symbols") or []) if isinstance(s, str)]
+    sel_month = snap.get("selection_month")
+    if not names or not sel_month:
+        tlog.log(tlog.main, "label_trades", "snapshot has no selection; nothing to label")
+        return
+
+    paper = str(credentials.get("paper", "true")).lower() != "false"
+    client = AlpacaClient(AlpacaConfig(credentials["api_key"], credentials["secret_key"], paper=paper))
+    client.connect()
+    md = MarketData(client)
+
+    entry_dt = pd.Timestamp(f"{sel_month}-01")
+    rows: list[dict] = []
+    for sym in names:
+        try:
+            hist = md.get_history(sym, timeframe, max_hold + 40)
+            # the broker history index is tz-aware (UTC); match the entry bound's tz
+            # to it (else the comparison raises), falling back to naive if it is naive.
+            bound = entry_dt.tz_localize(hist.index.tz) if (
+                getattr(hist.index, "tz", None) is not None and entry_dt.tzinfo is None) else entry_dt
+            after = hist[hist.index >= bound]
+            if len(after) < max_hold + 1:                # cohort not matured yet
+                continue
+            lab = ml.triple_barrier_label(after["close"], 0, pt, sl, max_hold)
+            rows.append({"entry_date": str(after.index[0])[:10], "symbol": sym, **lab})
+        except Exception as exc:  # noqa: BLE001 - one bad name must not sink the batch
+            tlog.log(tlog.main, "label_trades", f"label fetch failed {sym}: {exc}")
+
+    written = ml.append_labels(TRADE_LABELS_CSV, rows)
+    total = ml.label_count(TRADE_LABELS_CSV)
+    tlog.log(tlog.main, "label_trades",
+             f"{book} cohort {sel_month}: +{written} labels (total {total}; "
+             f"train-ready={ml.ready_to_train(TRADE_LABELS_CSV)})",
+             mode="PAPER" if paper else "LIVE")
+
+
 def run_record_track(config: dict[str, Any], credentials: dict[str, str],
                      path: str = TRACK_RECORD_CSV) -> None:  # pragma: no cover - live broker/market
     """Append today's book / EW-S&P500 / SPY NAV to the track record (daily gate plumbing).
@@ -1953,6 +2020,9 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     mode.add_argument("--shadow-report", action="store_true", dest="shadow_report",
                       help="generate the monthly HMM-vs-JumpModel shadow regime "
                            "report from logs/shadow_regime.csv (T1.4)")
+    mode.add_argument("--label-trades", action="store_true", dest="label_trades",
+                      help="triple-barrier label the book's matured monthly cohort "
+                           "into logs/trade_labels.csv (T3.1; schedule monthly, no orders)")
     mode.add_argument("--live", action="store_true", help="paper/live trading loop (default)")
 
     parser.add_argument("--execute", action="store_true",
@@ -2020,6 +2090,8 @@ def main(argv: Optional[list[str]] = None) -> None:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(md)
         print(f"shadow report -> {out}")
+    elif args.label_trades:
+        run_label_trades(config, load_credentials())
     else:  # default: live
         run_live(config, load_credentials())
 

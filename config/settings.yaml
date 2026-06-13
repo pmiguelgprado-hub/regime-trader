@@ -108,6 +108,16 @@ quality:
   gross_floor: 0.0                  # min gross after vol-targeting
 
 # ---------------------------------------------------------------------------
+# meta_labeling — triple-barrier labeling accumulation (T3.1). Builds the training
+#   set during the gates; the secondary sizing model is fit later (>=200 labels) on
+#   its own prereg. Labeling only — no model, no orders.
+# ---------------------------------------------------------------------------
+meta_labeling:
+  pt: 0.10                          # profit-take barrier (+10%)
+  sl: 0.10                          # stop-loss barrier (-10%)
+  max_hold: 21                      # vertical/time barrier (~1 month of bars)
+
+# ---------------------------------------------------------------------------
 # hmm — Hidden Markov Model regime detection
 # ---------------------------------------------------------------------------
 hmm:
