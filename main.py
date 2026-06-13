@@ -1576,7 +1576,7 @@ def run_record_track(config: dict[str, Any], credentials: dict[str, str],
 
 RISK_STATE_FILE = "risk_monitor_state.json"
 HEARTBEAT_STATE_FILE = "logs/heartbeat_state.json"
-EVIDENCE_CHAIN = "logs/evidence_chain.jsonl"
+EVIDENCE_CHAIN = "evidence/chain.jsonl"  # committed (git-anchored); logs/ is gitignored
 
 
 def _heartbeat_check(config: dict[str, Any], tlog: Any,
