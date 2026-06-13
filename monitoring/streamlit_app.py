@@ -40,6 +40,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from monitoring.dashboard_data import (
+    gate_status,
     live_account,
     live_portfolio_history,
     live_positions,
@@ -339,6 +340,43 @@ def _cross_sectional_book(book: dict) -> None:
         } for t in targets], width="stretch", hide_index=True)
 
 
+def _gate_countdown() -> None:
+    """Forward-gate countdown + rolling DSR per book (T0.6).
+
+    Each frozen gate runs a 12-month forward clock; this panel shows days
+    elapsed/remaining, the accumulated NAV observation count, annualized Sharpe,
+    and the Deflated Sharpe (deflated by the ledger's n_trials for that family).
+    Reads the live track_record.csv — the gate evidence itself.
+    """
+    from core.track_record import load_track_record
+
+    st.subheader("Forward Gates — countdown & rolling DSR")
+    try:
+        df = load_track_record("track_record.csv")
+    except Exception:  # noqa: BLE001
+        df = None
+    rows = gate_status(df) if df is not None and not df.empty else []
+    if not rows:
+        st.info("No track record yet. The daily `--record-track` job feeds these gates.")
+        return
+    table = []
+    for r in rows:
+        pct = max(0.0, min(1.0, r["days_elapsed"] / r["window_days"]))
+        table.append({
+            "book": r["name"],
+            "start": r["start"],
+            "progress": f"{pct * 100:.0f}%  ({r['days_elapsed']}/{r['window_days']}d)",
+            "days left": r["days_remaining"],
+            "obs": r["n_obs"],
+            "Sharpe (ann.)": None if r["sharpe"] is None else round(r["sharpe"], 2),
+            "DSR": "—" if r["dsr"] is None else f"{r['dsr']:.2f}",
+            "n_trials": r["n_trials"],
+        })
+    st.dataframe(table, width="stretch", hide_index=True)
+    st.caption("DSR > 0.5 favours real skill (deflated by the family's ledger n_trials). "
+               "Real money stays BLOCKED until a gate's 12-month window closes and passes.")
+
+
 def _macro_events() -> None:
     """US macro calendar panel: upcoming scheduled high-vol events (risk timing, not alpha)."""
     from datetime import date, timedelta
@@ -410,6 +448,10 @@ def render(symbol: str, toggles: dict) -> None:
         st.dataframe(snap["regime_table"], width="stretch", hide_index=True)
     _portfolio(positions)
 
+    if toggles.get("gates"):
+        st.divider()
+        _gate_countdown()
+
     if toggles.get("cross_book"):
         st.divider()
         _cross_sectional_book(load_book_snapshot())
@@ -470,6 +512,7 @@ toggles = {
     "evolution": st.sidebar.checkbox("Show portfolio evolution", value=True),
     "ev_period": st.sidebar.selectbox("Evolution period", ["1M", "3M", "6M", "1A"],
                                       index=1),
+    "gates": st.sidebar.checkbox("Show forward gates", value=True),
     "cross_book": st.sidebar.checkbox("Show cross-sectional book", value=True),
     "macro": st.sidebar.checkbox("Show macro calendar + news", value=True),
     "price": st.sidebar.checkbox("Show price chart", value=True),

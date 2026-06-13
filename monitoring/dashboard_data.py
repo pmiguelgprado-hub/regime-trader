@@ -215,6 +215,78 @@ def live_price(symbol: str, lookback_bars: int = 180,
         return None
 
 
+# --- gate countdown (T0.6) ----------------------------------------------------------
+
+# Each forward gate: NAV column in the track record, its start date (prereg freeze),
+# and the ledger family whose n_trials deflates its Sharpe.
+GATES = [
+    ("baseline", "book_nav", "2026-06-05", "momentum"),
+    ("challenger", "challenger_nav", "2026-06-05", "momentum"),
+    ("quality", "quality_nav", "2026-06-13", "quality"),
+]
+GATE_WINDOW_DAYS = 365
+
+
+def _per_bar_dsr(nav: pd.Series, n_trials: int, min_obs: int) -> "tuple[Optional[float], int]":
+    """Deflated Sharpe over a NAV level series ((dsr, n_obs); dsr None if too short)."""
+    from backtest.performance import deflated_sharpe_ratio
+
+    rets = nav.astype(float).pct_change().replace([float("inf"), float("-inf")], pd.NA).dropna()
+    n = int(len(rets))
+    if n < min_obs or rets.std(ddof=1) == 0:
+        return None, n
+    sr = float(rets.mean() / rets.std(ddof=1))         # per-bar Sharpe (DSR convention)
+    dsr = deflated_sharpe_ratio(sr, n, skew=float(rets.skew()), kurt=float(rets.kurtosis() + 3.0),
+                                n_trials=max(1, n_trials))
+    return float(dsr), n
+
+
+def gate_status(track_df: Optional[pd.DataFrame],
+                n_trials_fn=None, today: Optional[str] = None,
+                min_obs: int = 30) -> list[dict[str, Any]]:
+    """Per-gate countdown + rolling DSR for the dashboard (T0.6).
+
+    Args:
+        track_df: Loaded track_record.csv (or None/empty -> []).
+        n_trials_fn: ``family -> int`` (defaults to the research ledger).
+        today: ISO date override (defaults to the last recorded row, then now).
+        min_obs: Minimum return obs before a DSR is reported.
+
+    Returns:
+        One dict per gate with a usable NAV column: name, start, days_elapsed,
+        days_remaining, window_days, n_obs, sharpe, dsr, n_trials.
+    """
+    if track_df is None or len(track_df) == 0 or "date" not in track_df:
+        return []
+    if n_trials_fn is None:
+        from core import research_ledger as rl
+        n_trials_fn = lambda fam: rl.n_trials(family=fam)  # noqa: E731
+    ref = today or str(track_df.iloc[-1]["date"])[:10]
+    ref_d = pd.Timestamp(ref)
+
+    out: list[dict[str, Any]] = []
+    for name, col, start, family in GATES:
+        if col not in track_df.columns:
+            continue
+        nav = pd.to_numeric(track_df[col], errors="coerce").dropna()
+        if nav.empty:
+            continue                                   # sleeve not feeding yet
+        n_trials = int(n_trials_fn(family) or 1)
+        dsr, n_obs = _per_bar_dsr(nav, n_trials, min_obs)
+        rets = nav.pct_change().dropna()
+        sharpe = (float(rets.mean() / rets.std(ddof=1)) * (252 ** 0.5)
+                  if len(rets) > 1 and rets.std(ddof=1) else None)
+        elapsed = (ref_d - pd.Timestamp(start)).days
+        out.append({
+            "name": name, "start": start,
+            "days_elapsed": elapsed,
+            "days_remaining": GATE_WINDOW_DAYS - elapsed,
+            "window_days": GATE_WINDOW_DAYS,
+            "n_obs": n_obs, "sharpe": sharpe, "dsr": dsr, "n_trials": n_trials,
+        })
+    return out
+
+
 def regime_distribution(regime_history: Optional[pd.DataFrame]) -> pd.Series:
     """Count bars per regime for the learned-regimes panel.
 
