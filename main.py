@@ -1601,6 +1601,71 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
     return plan
 
 
+def run_drift_check(config: dict[str, Any], credentials: dict[str, str]) -> None:  # pragma: no cover - live broker/market
+    """Detect feature/posterior drift and STAGE (never auto-promote) a retrain (T3.3).
+
+    Coherent with T0.4 pin-champion: the live champion stays pinned. This job only
+    *flags* drift and stages a candidate for a human to promote. It computes the
+    recent-vs-prior feature PSI and the champion's latest posterior entropy; if
+    either breaches its threshold it fits a fresh HMM, saves it to the registry as a
+    NEW version (does NOT promote), logs the metrics, and alerts for human review.
+    Schedule weekly. No orders, no promotion.
+    """
+    from broker.alpaca_client import AlpacaClient, AlpacaConfig
+    from core import drift as dr
+    from core.hmm_engine import HMMEngine
+    from core.model_registry import ModelRegistry
+    from data.feature_engineering import FeatureEngineer
+    from data.market_data import MarketData
+    from monitoring.alerts import AlertConfig, AlertManager, AlertSeverity
+    from monitoring.logger import LoggerConfig, setup_logging
+
+    tlog = setup_logging(LoggerConfig(log_dir="logs"))
+    alerts = AlertManager(_build_dataclass(AlertConfig, config.get("monitoring", {})), tlog)
+    dcfg = config.get("drift", {})
+    proxy = config.get("cross_sectional", {}).get("proxy", "SPY")
+    window = int(dcfg.get("window", 126))
+    timeframe = config.get("broker", {}).get("timeframe", "1Day")
+
+    paper = str(credentials.get("paper", "true")).lower() != "false"
+    client = AlpacaClient(AlpacaConfig(credentials["api_key"], credentials["secret_key"], paper=paper))
+    client.connect()
+    md = MarketData(client)
+    registry = ModelRegistry(MODEL_DIR)
+    champion = registry.load_champion(proxy) or HMMEngine.load(f"{MODEL_DIR}/hmm_{proxy}.pkl")
+
+    # need 2 PSI windows AFTER the feature warmup (~250 bars for the SMA200 + dropna).
+    feats = FeatureEngineer().build_features(md.get_history(proxy, timeframe, 2 * window + 320))
+    psi = dr.recent_vs_prior_psi(feats, window=window)
+    proba = champion.predict_regime_proba(feats)
+    entropy = dr.normalized_entropy(proba.to_numpy()[-1])
+    psi_th = float(dcfg.get("psi_threshold", 0.30))
+    ent_th = float(dcfg.get("entropy_threshold", 0.90))
+    triggered = dr.drift_triggers_retrain(psi, entropy, psi_th, ent_th)
+
+    dpath = Path("logs/drift.csv")
+    new = not dpath.exists()
+    import csv as _csv
+    with open(dpath, "a", newline="") as f:
+        w = _csv.writer(f)
+        if new:
+            w.writerow(["date", "psi", "entropy", "triggered", "staged_version"])
+        staged = ""
+        if triggered:
+            candidate = HMMEngine(_core_configs(config)[0])
+            candidate.fit(feats)
+            staged = registry.save_version(candidate, proxy)   # NOT promoted
+            alerts.send("drift_retrain_staged",
+                        f"{proxy} drift psi={psi:.2f} entropy={entropy:.2f} -> staged "
+                        f"candidate {staged} for HUMAN promotion (champion unchanged)",
+                        AlertSeverity.WARNING)
+        w.writerow([str(feats.index[-1])[:10], round(psi, 4), round(entropy, 4),
+                    triggered, staged])
+    tlog.log(tlog.main, "drift_check",
+             f"psi={psi:.3f}(>{psi_th}) entropy={entropy:.3f}(>{ent_th}) triggered={triggered}",
+             mode="PAPER" if paper else "LIVE")
+
+
 TRADE_LABELS_CSV = "logs/trade_labels.csv"
 
 
@@ -2077,6 +2142,9 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     mode.add_argument("--postmortem", action="store_true", dest="postmortem",
                       help="generate the monthly postmortem report (T4.5; read-only "
                            "summary of books/gates/shadow/alerts)")
+    mode.add_argument("--drift-check", action="store_true", dest="drift_check",
+                      help="check feature/posterior drift; STAGE (never promote) a "
+                           "retrain candidate for human review (T3.3; schedule weekly)")
     mode.add_argument("--live", action="store_true", help="paper/live trading loop (default)")
 
     parser.add_argument("--execute", action="store_true",
@@ -2146,6 +2214,8 @@ def main(argv: Optional[list[str]] = None) -> None:
         print(f"shadow report -> {out}")
     elif args.label_trades:
         run_label_trades(config, load_credentials())
+    elif args.drift_check:
+        run_drift_check(config, load_credentials())
     elif args.postmortem:
         from core import research_ledger as rl
         from core.postmortem import monthly_postmortem_markdown

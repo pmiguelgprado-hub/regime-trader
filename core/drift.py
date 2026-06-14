@@ -118,3 +118,30 @@ def drift_triggers_retrain(
         True if either signal breaches its threshold.
     """
     return psi > psi_threshold or entropy > entropy_threshold
+
+
+def recent_vs_prior_psi(panel, window: int = 126, bins: int = 5):
+    """Max feature PSI of the last ``window`` bars vs the ``window`` before them.
+
+    A self-contained drift gauge for the live loop: no stored training snapshot
+    needed — compare the recent window against the immediately prior one. Returns
+    ``0.0`` when there are fewer than ``2*window`` rows (not enough history to judge).
+
+    Defaults (window 126 ≈ 6 months, 5 bins) keep the small-sample noise floor low:
+    empirically max PSI ≈ 0.21 between two windows from the same distribution, so a
+    drift threshold of ~0.30+ sits clear of noise. Finer bins on short windows
+    inflate PSI through empty-bin terms.
+
+    Args:
+        panel: Feature DataFrame (datetime-indexed, model feature columns).
+        window: Bars in each comparison window.
+        bins: Quantile bins per feature.
+
+    Returns:
+        Max per-column PSI between the two windows.
+    """
+    if panel is None or len(panel) < 2 * window:
+        return 0.0
+    prior = panel.iloc[-2 * window:-window]
+    recent = panel.iloc[-window:]
+    return max_feature_psi(prior, recent, bins)

@@ -78,3 +78,34 @@ def test_trigger_fires_when_psi_exceeds_threshold() -> None:
 def test_trigger_silent_when_both_within_limits() -> None:
     """Calm features and a confident posterior -> no retrain requested."""
     assert not drift_triggers_retrain(psi=0.05, entropy=0.2, psi_threshold=0.25, entropy_threshold=0.9)
+
+
+def test_recent_vs_prior_psi_below_noise_floor_when_stable() -> None:
+    """Two adjacent windows from the same distribution stay below the noise floor."""
+    import numpy as np
+    import pandas as pd
+
+    from core.drift import recent_vs_prior_psi
+    rng = np.random.default_rng(0)
+    df = pd.DataFrame({"f": rng.normal(0, 1, 400)},
+                      index=pd.bdate_range("2025-01-01", periods=400))
+    assert recent_vs_prior_psi(df) < 0.25
+
+
+def test_recent_vs_prior_psi_high_on_shift() -> None:
+    import numpy as np
+    import pandas as pd
+
+    from core.drift import recent_vs_prior_psi
+    rng = np.random.default_rng(1)
+    vals = np.concatenate([rng.normal(0, 1, 260), rng.normal(6, 1, 126)])
+    df = pd.DataFrame({"f": vals}, index=pd.bdate_range("2025-01-01", periods=len(vals)))
+    assert recent_vs_prior_psi(df) > 0.5
+
+
+def test_recent_vs_prior_psi_short_history_zero() -> None:
+    import pandas as pd
+
+    from core.drift import recent_vs_prior_psi
+    df = pd.DataFrame({"f": [1.0, 2.0, 3.0]}, index=pd.bdate_range("2025-01-01", periods=3))
+    assert recent_vs_prior_psi(df) == 0.0

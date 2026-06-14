@@ -108,6 +108,15 @@ quality:
   gross_floor: 0.0                  # min gross after vol-targeting
 
 # ---------------------------------------------------------------------------
+# drift — out-of-cycle retrain trigger (T3.3). Stages a CHALLENGER model version
+#   for HUMAN promotion (no auto-promote — coherent with T0.4 pin-champion).
+# ---------------------------------------------------------------------------
+drift:
+  psi_threshold: 0.30               # max-feature PSI (recent vs prior window) above noise floor (~0.21)
+  entropy_threshold: 0.90           # normalized posterior entropy above which the model is uncertain
+  window: 126                       # bars per PSI comparison window (~6 months)
+
+# ---------------------------------------------------------------------------
 # meta_labeling — triple-barrier labeling accumulation (T3.1). Builds the training
 #   set during the gates; the secondary sizing model is fit later (>=200 labels) on
 #   its own prereg. Labeling only — no model, no orders.
