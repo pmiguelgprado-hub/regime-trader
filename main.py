@@ -67,8 +67,18 @@ def load_config(path: str = "config/settings.yaml") -> dict[str, Any]:
         return yaml.safe_load(fh)
 
 
-def load_credentials() -> dict[str, str]:
+def load_credentials(account: str = "") -> dict[str, str]:
     """Load broker credentials from environment (``.env`` if present).
+
+    Multi-account (T5.4): with ``account`` set (e.g. ``"sleeve"``), read the
+    suffixed env vars ``ALPACA_API_KEY_<ACCOUNT>`` / ``ALPACA_SECRET_KEY_<ACCOUNT>``
+    so new sleeves can trade a SEPARATE paper account while the frozen
+    baseline/challenger/hedge keep account 1 (clean attribution isolation). Falls
+    back to the main account's vars when the suffixed ones are absent — so callers
+    work unchanged until Pablo creates the 2nd account.
+
+    Args:
+        account: Optional account name; "" = the main account.
 
     Returns:
         Credential fields: ``api_key``, ``secret_key``, ``paper``.
@@ -79,10 +89,12 @@ def load_credentials() -> dict[str, str]:
         load_dotenv()
     except ImportError:
         pass
+    sfx = f"_{account.upper()}" if account else ""
     return {
-        "api_key": os.environ.get("ALPACA_API_KEY", ""),
-        "secret_key": os.environ.get("ALPACA_SECRET_KEY", ""),
-        "paper": os.environ.get("ALPACA_PAPER", "true"),
+        "api_key": os.environ.get(f"ALPACA_API_KEY{sfx}") or os.environ.get("ALPACA_API_KEY", ""),
+        "secret_key": (os.environ.get(f"ALPACA_SECRET_KEY{sfx}")
+                       or os.environ.get("ALPACA_SECRET_KEY", "")),
+        "paper": os.environ.get(f"ALPACA_PAPER{sfx}") or os.environ.get("ALPACA_PAPER", "true"),
     }
 
 
