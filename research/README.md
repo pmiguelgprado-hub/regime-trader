@@ -41,3 +41,23 @@ judgment is documented in each prereg.
 
 Backfill basis is `estimate` (reconstructed from the frozen preregs, not charged
 at their original freeze). All future charges are `prereg`-basis at freeze time.
+
+## Research-factory rails (T4.4 — rails built, autonomous loop GATED)
+
+`core/research_runner.py` is the hard scaffolding the LLM-alpha-mining literature
+ignores. Invoked manually for now (Pablo's decision: manual for weeks, nightly
+plist later):
+
+- **Blocklist** (`default_blocklist`) — already-falsified ideas (R1 HMM return
+  timer, rotation via B, regime-conditional shorts, direct hmm_prob deploy,
+  paid-data order-flow/VPIN, HF pairs) are refused before any evaluation.
+- **Weekly budget** — `weekly_budget_ok` caps hypotheses/week (trial discipline >
+  throughput); runs logged to `research/runlog.jsonl`.
+- **Evaluation harness** — `evaluate_candidate` charges the ledger then runs
+  CPCV + deflated-Sharpe, writing a verdict to `research/vault/<id>.md` for a
+  HUMAN to adjudicate. A pass is necessary, not sufficient; promotion = new prereg
+  + forward book (T2 pattern).
+
+**NOT built (the gated step):** autonomous code generation, a sandbox that writes
+trader state, and the nightly scheduler. The rails exist so that when the loop is
+eventually turned on, it cannot mine the DSR into the ground.
