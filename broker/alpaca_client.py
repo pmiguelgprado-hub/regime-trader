@@ -363,6 +363,33 @@ class AlpacaClient:
         df.index.name = "timestamp"
         return df[["open", "high", "low", "close", "volume"]]
 
+    def get_crypto_bars(
+        self, symbol: str, timeframe: str, start: str, end: Optional[str] = None
+    ) -> pd.DataFrame:
+        """Fetch historical crypto OHLCV (T2.3 sleeve; e.g. ``"BTC/USD"``).
+
+        Crypto uses a separate, keyless data client and request type — the stock
+        bars endpoint rejects crypto symbols. Same DataFrame shape as
+        :meth:`get_historical_bars` so the sleeve code is source-agnostic.
+        """
+        from alpaca.data.historical import CryptoHistoricalDataClient
+        from alpaca.data.requests import CryptoBarsRequest
+
+        client = CryptoHistoricalDataClient()      # crypto data is public (no keys)
+        req = CryptoBarsRequest(
+            symbol_or_symbols=symbol, timeframe=_to_timeframe(timeframe),
+            start=pd.Timestamp(start), end=pd.Timestamp(end) if end else None,
+        )
+        bars = self._retry(lambda: client.get_crypto_bars(req), "get_crypto_bars")
+        df = bars.df
+        if df.empty:
+            return df
+        if isinstance(df.index, pd.MultiIndex):
+            df = df.xs(symbol, level=0)
+        df.index = pd.to_datetime(df.index)
+        df.index.name = "timestamp"
+        return df[["open", "high", "low", "close", "volume"]]
+
     def get_latest_quote(self, symbol: str) -> dict[str, float]:
         """Fetch the latest bid/ask for a symbol.
 
