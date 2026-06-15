@@ -166,8 +166,26 @@ def _candles(symbol: str, df) -> None:
         x=df.index, open=df["open"], high=df["high"], low=df["low"], close=df["close"],
         increasing_line_color=UP, decreasing_line_color=DOWN, name=symbol,
     ))
-    fig.update_layout(template="plotly_dark", height=380,
-                      margin=dict(l=10, r=10, t=10, b=10),
+    # Fit the y-axis to the actual price band. Plotly's auto-range keys off the most
+    # extreme bar, so a single bad print (a split-glitch low near 100) drags the floor
+    # down and crushes a $650-720 stock into the top sliver of the panel. Use robust
+    # 1st/99th percentiles of low/high so one outlier bar can't wreck the scale.
+    lows, highs = df["low"].astype(float), df["high"].astype(float)
+    ylo, yhi = float(lows.quantile(0.01)), float(highs.quantile(0.99))
+    pad = (yhi - ylo) * 0.06 or max(yhi * 0.02, 1.0)
+    fig.update_yaxes(range=[ylo - pad, yhi + pad], title_text="USD")
+    fig.update_xaxes(rangeselector={
+        "buttons": [
+            {"count": 1, "label": "1M", "step": "month", "stepmode": "backward"},
+            {"count": 3, "label": "3M", "step": "month", "stepmode": "backward"},
+            {"count": 6, "label": "6M", "step": "month", "stepmode": "backward"},
+            {"step": "all", "label": "Todo"},
+        ],
+        "bgcolor": "rgba(71,191,255,0.10)", "activecolor": BLUE,
+        "font": {"color": "#fafafa"}, "x": 0, "y": 1.06,
+    })
+    fig.update_layout(template="plotly_dark", height=460,
+                      margin=dict(l=10, r=10, t=44, b=10),
                       xaxis_rangeslider_visible=False,
                       paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
     st.plotly_chart(fig, width="stretch")
@@ -206,60 +224,91 @@ def _metrics(acct: dict | None, snap: dict) -> None:
 
 
 def _regime_detection(snap: dict) -> None:
-    st.subheader("Regime Detection")
+    """Regime metric row (the gauges render full-width in ``_regime_gauges``)."""
+    st.subheader("Régimen de mercado")
     reg = snap.get("regime") or {}
     name = reg.get("name", snap.get("last_regime") or "—")
     conf = float(reg.get("confidence", 0.0)) * 100.0
     a, b, c, d = st.columns(4)
-    a.metric("Regime", str(name).upper())
-    b.metric("Confidence", f"{conf:.1f}%")
-    c.metric("Stability", f"{reg.get('stability_bars', 0)} bars")
-    d.metric("Vol Rank", f"{reg.get('vol_rank', 0.0):.2f}")
+    a.metric("Estado", str(name).upper())
+    b.metric("Confianza", f"{conf:.1f}%")
+    c.metric("Estabilidad", f"{reg.get('stability_bars', 0)} días")
+    d.metric("Nivel de volatilidad", f"{reg.get('vol_rank', 0.0):.2f}")
     if reg.get("confirmed"):
-        st.success("✓ CONFIRMED")
+        st.success("✓ Estado CONFIRMADO (el bot ya opera con este régimen)")
     elif reg:
-        st.warning("… stabilizing")
-    if reg:
-        hazard = reg.get("transition_hazard")
-        if hazard is None:                       # fall back to the book snapshot
-            hazard = (load_book_snapshot() or {}).get("transition_hazard")
-        if hazard is not None:
-            g1, g2 = st.columns(2)
-            with g1:
-                st.plotly_chart(_confidence_gauge(conf, str(name)), width="stretch")
-            with g2:
-                st.plotly_chart(_hazard_gauge(float(hazard)), width="stretch")
-                extras = []
-                if reg.get("vol_rank_prob") is not None:
-                    extras.append(f"vol rank (posterior): {reg['vol_rank_prob']:.2f}")
-                if reg.get("predictive_entropy") is not None:
-                    extras.append(f"predictive entropy: {reg['predictive_entropy']:.2f}")
-                if extras:
-                    st.caption("  |  ".join(extras))
-        else:
+        st.warning("… estabilizándose (espera unos días para confirmar el cambio)")
+    # Always-visible plain-language key (he asked: varios conceptos no los entiende).
+    st.caption(
+        "**Estado** = fase de mercado detectada (calma, subida, bajada, pánico…).  ·  "
+        "**Confianza** = cómo de seguro está el modelo (alto = lectura clara).  ·  "
+        "**Estabilidad** = días seguidos en ese estado.  ·  "
+        "**Nivel de volatilidad** 0 → 1: 0 = mercado en calma (el bot invierte de lleno), "
+        "1 = mercado nervioso (el bot reduce exposición)."
+    )
+
+
+def _regime_gauges(snap: dict) -> None:
+    """Probability gauges, rendered full-width and centered (not inside a side column)."""
+    reg = snap.get("regime") or {}
+    if not reg:
+        return
+    name = reg.get("name", snap.get("last_regime") or "—")
+    conf = float(reg.get("confidence", 0.0)) * 100.0
+    hazard = reg.get("transition_hazard")
+    if hazard is None:                           # fall back to the book snapshot
+        hazard = (load_book_snapshot() or {}).get("transition_hazard")
+    if hazard is not None:
+        g1, g2 = st.columns(2)
+        with g1:
             st.plotly_chart(_confidence_gauge(conf, str(name)), width="stretch")
-        runners = reg.get("runner_ups") or {}
-        others = [f"{k.upper()}: {v:.2e}" for k, v in list(runners.items())[1:5]]
-        if others:
-            st.caption("Runner-up states:  " + "  |  ".join(others))
+        with g2:
+            st.plotly_chart(_hazard_gauge(float(hazard)), width="stretch")
+        st.caption(
+            "**Izquierda — Confianza:** seguridad del modelo en el régimen actual.  ·  "
+            "**Derecha — Riesgo de volatilidad mañana:** probabilidad de saltar a "
+            "volatilidad alta en la próxima sesión. Si supera la línea rosa (50%), el "
+            "bot compra cobertura para protegerse."
+        )
+        extras = []
+        if reg.get("vol_rank_prob") is not None:
+            extras.append(f"nivel de volatilidad (suavizado): {reg['vol_rank_prob']:.2f}")
+        if reg.get("predictive_entropy") is not None:
+            extras.append(f"incertidumbre del modelo: {reg['predictive_entropy']:.2f}")
+        if extras:
+            st.caption("  ·  ".join(extras))
+    else:
+        _, mid, _ = st.columns([1, 2, 1])         # center the single gauge on the page
+        with mid:
+            st.plotly_chart(_confidence_gauge(conf, str(name)), width="stretch")
+    runners = reg.get("runner_ups") or {}
+    others = [f"{k.upper()}: {v:.2e}" for k, v in list(runners.items())[1:5]]
+    if others:
+        st.caption("Otros estados posibles (menos probables):  " + "  ·  ".join(others))
 
 
 def _risk_status(snap: dict) -> None:
-    st.subheader("Risk Status")
+    st.subheader("Estado de riesgo")
     rk = snap.get("risk") or {}
     a, b, c = st.columns(3)
-    a.metric("Daily DD", f"{rk.get('daily_dd', 0.0) * 100:.2f}%",
-             help=f"limit {rk.get('daily_dd_limit', 0.03):.0%}")
-    b.metric("Peak DD", f"{rk.get('peak_dd', 0.0) * 100:.2f}%",
-             help=f"limit {rk.get('peak_dd_limit', 0.10):.0%}")
-    c.metric("Leverage cap", f"{rk.get('leverage_limit', 1.25):.2f}x")
+    a.metric("Caída hoy", f"{rk.get('daily_dd', 0.0) * 100:.2f}%",
+             help=f"límite {rk.get('daily_dd_limit', 0.03):.0%}")
+    b.metric("Caída máxima", f"{rk.get('peak_dd', 0.0) * 100:.2f}%",
+             help=f"límite {rk.get('peak_dd_limit', 0.10):.0%}")
+    c.metric("Apalancamiento máx.", f"{rk.get('leverage_limit', 1.25):.2f}x")
     state = str(rk.get("state", snap.get("risk_state", "—"))).lower()
     if rk.get("breakers_clear", state == "normal"):
-        st.success("All circuit breakers clear")
+        st.success("🟢 Todo en orden (sin frenos activados)")
     elif state == "reduced":
-        st.warning("Circuit breaker: REDUCED — sizing halved")
+        st.warning("🟡 Freno activado: REDUCIDO — el bot opera a media exposición")
     else:
-        st.error(f"Circuit breaker: {state.upper()} — trading halted / liquidating")
+        st.error(f"🔴 Freno: {state.upper()} — trading detenido / liquidando")
+    st.caption(
+        "**Caída** (drawdown) = cuánto ha bajado la cartera desde su máximo. "
+        "**Hoy** = en la sesión actual; **máxima** = la peor caída acumulada.  ·  "
+        "**Apalancamiento** = cuánto puede invertir frente al capital (1.25x = como mucho "
+        "un 25% prestado). Los frenos cortan o reducen el trading si las caídas se disparan."
+    )
 
 
 def _portfolio(positions: list) -> None:
@@ -373,8 +422,13 @@ def _gate_countdown() -> None:
             "n_trials": r["n_trials"],
         })
     st.dataframe(table, width="stretch", hide_index=True)
-    st.caption("DSR > 0.5 favours real skill (deflated by the family's ledger n_trials). "
-               "Real money stays BLOCKED until a gate's 12-month window closes and passes.")
+    st.caption(
+        "Cada estrategia corre 12 meses en papel antes de tocar dinero real.  ·  "
+        "**Sharpe** = rentabilidad ajustada al riesgo (más alto = mejor).  ·  "
+        "**DSR** (Sharpe descontado) corrige el Sharpe por cuántas variantes se probaron; "
+        "**DSR > 0.5** sugiere habilidad real, no suerte.  ·  "
+        "**Dinero real BLOQUEADO** hasta que una estrategia cierre y supere sus 12 meses."
+    )
 
 
 def _macro_events() -> None:
@@ -401,27 +455,32 @@ def _macro_events() -> None:
 
 
 def _news_panel() -> None:
-    """Markets/macro headlines for operator awareness (no trading decision)."""
-    st.subheader("Markets / Macro Headlines")
+    """Markets/macro headlines for operator awareness (no trading decision).
+
+    Kept but de-emphasised (Pablo 2026-06-15: low value, don't delete): a short,
+    collapsed digest instead of a long link wall.
+    """
+    st.subheader("Titulares de mercado")
 
     @st.cache_data(ttl=300)                              # refetch at most every 5 min
     def _cached() -> list:
         from monitoring.news_feed import fetch_headlines
         try:
-            return fetch_headlines(limit=12)
+            return fetch_headlines(limit=6)
         except Exception:
             return []
 
     heads = _cached()
     if not heads:
-        st.info("No headlines right now (feeds unreachable).")
+        st.caption("Sin titulares ahora (fuentes no disponibles).")
         return
-    for h in heads:
-        src = h.get("source", "")
-        title, link = h.get("title", ""), h.get("link", "")
-        st.markdown(f"- [{title}]({link}) — *{src}*" if link else f"- {title} — *{src}*")
-    st.caption("Awareness only. Public headlines carry no tradable edge for a retail bot "
-               "(priced in instantly); this informs **you**, not the bot.")
+    with st.expander(f"Ver {len(heads)} titulares (solo informativo)", expanded=False):
+        for h in heads:
+            src = h.get("source", "")
+            title, link = h.get("title", ""), h.get("link", "")
+            st.markdown(f"- [{title}]({link}) — *{src}*" if link else f"- {title} — *{src}*")
+    st.caption("Solo para que **tú** estés al tanto. Las noticias públicas no dan ventaja "
+               "al bot (el mercado ya las ha descontado). No influyen en sus decisiones.")
 
 
 def render(symbol: str, toggles: dict) -> None:
@@ -443,6 +502,7 @@ def render(symbol: str, toggles: dict) -> None:
         _regime_detection(snap)
     with right:
         _risk_status(snap)
+    _regime_gauges(snap)        # full width so the gauges sit centered, not left-shifted
     st.divider()
     if snap.get("regime_table"):
         st.dataframe(snap["regime_table"], width="stretch", hide_index=True)
