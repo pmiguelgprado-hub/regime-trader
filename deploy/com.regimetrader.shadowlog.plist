@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  regime-trader SHADOW-SIGNAL logger (launchd LaunchAgent).
+  Runs `main.py --shadow-log` every weekday (Mon-Fri) ~22:15 CEST, after the US close
+  and BEFORE the 22:30 rebalance. Logs the measurement-only shadow studies that used to
+  run inline in run_once / run_rebalance: HMM-vs-JumpModel + BOCPD vol-regime agreement
+  (shadow_regime.csv), macro risk-confirmation via VIX term structure + FRED HY OAS
+  (shadow_macro.csv), and champion-vs-refit equivalence on retrain-due days
+  (shadow_refit.csv).
+
+  WHY a separate job: inline, those Jump Model fits and yfinance/FRED fetches sat
+  upstream of paper-order submission, so a slow or hung feed could delay or (no-timeout)
+  block trading. This job is READ-ONLY — it pulls price history and free macro feeds
+  only and NEVER submits an order — so loading it cannot trade. It exists so the T1.x
+  shadow study keeps its daily cadence now that the executor no longer logs inline.
+
+  Install:
+    cp deploy/com.regimetrader.shadowlog.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.regimetrader.shadowlog.plist
+  Stop:
+    launchctl unload ~/Library/LaunchAgents/com.regimetrader.shadowlog.plist
+  Run now (test):
+    launchctl start com.regimetrader.shadowlog
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.regimetrader.shadowlog</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/pablomiguelgonzalezprado/AIOS/projects/regime-trader/.venv/bin/python</string>
+    <string>main.py</string>
+    <string>--shadow-log</string>
+  </array>
+
+  <!-- T0.4 determinism (R-4): the retrain-due shadow HMM fit must be bit-reproducible;
+       single-threaded numeric libs avoid order-nondeterministic BLAS reductions. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>OMP_NUM_THREADS</key><string>1</string>
+    <key>OPENBLAS_NUM_THREADS</key><string>1</string>
+    <key>MKL_NUM_THREADS</key><string>1</string>
+    <key>VECLIB_MAXIMUM_THREADS</key><string>1</string>
+  </dict>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/pablomiguelgonzalezprado/AIOS/projects/regime-trader</string>
+
+  <!-- Every weekday (Weekday 1-5 = Mon-Fri) at 22:15 local time, after the US close,
+       ahead of the 22:30 rebalance. No weekend rows (feeds stale). -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>22</integer><key>Minute</key><integer>15</integer></dict>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>22</integer><key>Minute</key><integer>15</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>22</integer><key>Minute</key><integer>15</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>22</integer><key>Minute</key><integer>15</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>22</integer><key>Minute</key><integer>15</integer></dict>
+  </array>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/pablomiguelgonzalezprado/AIOS/projects/regime-trader/logs/shadowlog.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/pablomiguelgonzalezprado/AIOS/projects/regime-trader/logs/shadowlog.err.log</string>
+</dict>
+</plist>

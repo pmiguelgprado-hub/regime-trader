@@ -1184,24 +1184,10 @@ def run_once(config: dict[str, Any], credentials: dict[str, str],
                     f"{symbol} champion transition hash {actual_sha} != promoted "
                     f"{expected_sha} — model artifact changed outside promotion")
 
-    # Dual-log (2-week equivalence check): where the old rule would have refit,
-    # fit a throwaway shadow and log agreement instead of swapping models.
-    if (bool(config.get("hmm", {}).get("dual_log_refit", True))
-            and _needs_retrain(registry.champion_path(symbol) or model_path)):
-        try:
-            from core.shadow_refit import append_row, compare_engines
-            from data.market_data import load_ohlcv
-            shadow_feats = fe.build_features(
-                load_ohlcv(symbol, timeframe=config.get("broker", {}).get("timeframe", "1Day")))
-            shadow = HMMEngine(hmm_cfg)
-            shadow.fit(shadow_feats)
-            row = compare_engines(hmm, shadow, shadow_feats)
-            append_row("logs/shadow_refit.csv", row)
-            tlog.log(tlog.main, "shadow_refit",
-                     f"agree={row['agree']} champion={row['champion_regime']} "
-                     f"shadow={row['shadow_regime']} -> logs/shadow_refit.csv")
-        except Exception as exc:  # noqa: BLE001 - measurement must never block the cycle
-            logging.getLogger(__name__).warning("shadow refit failed (non-fatal): %s", exc)
+    # Champion-vs-refit equivalence logging (T0.4 dual-log) is decoupled to
+    # `run_shadow_log` (--shadow-log) so a throwaway shadow HMM refit never sits
+    # upstream of the daily decision cycle. Measurement-only — it never affected order
+    # submission, but on a retrain-due day the inline fit added latency before run_cycle.
 
     risk_cfg.lock_file = risk_cfg.lock_file or "logs/trading_halted.lock"
     risk = RiskManager(risk_cfg)
@@ -1368,46 +1354,12 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
     entropy = predictive_entropy_norm(last.state_probabilities,
                                       hmm.get_transition_matrix())
 
-    # T1.1 shadow regime log (baseline run only; shadow-only, never touches orders):
-    # fit the Jump Model on the same panel and record HMM-vs-JM vol-rank agreement.
-    if not challenger and not quality:
-        try:
-            from core.changepoint import changepoint_score
-            from core.jump_model import JumpModel
-            from core.shadow_regime import append_row, make_row
-            jm = JumpModel(n_states=hmm.n_regimes, jump_penalty=30.0,
-                           random_state=42).fit(feats)
-            # T1.2 model-free changepoint corroborator on proxy daily returns.
-            cp = changepoint_score(proxy_hist["close"].pct_change().dropna().to_numpy())
-            append_row("logs/shadow_regime.csv",
-                       make_row(str(feats.index[-1])[:10], vol_rank, jm.vol_rank(), bocpd_cp=cp))
-        except Exception as exc:  # noqa: BLE001 - shadow must never break the rebalance
-            logging.getLogger(__name__).warning("shadow regime log failed (non-fatal): %s", exc)
-
-        # T1.3 macro risk-confirmation shadow (free VIX term structure + FRED HY OAS).
-        # Risk CONFIRMATION only — NEVER enters the HMM panel (that would mutate the
-        # frozen gate); logged separately for the shadow study.
-        try:
-            import csv as _csv
-
-            from data.macro_features import (fetch_fred_series, fetch_term_structure,
-                                             risk_confirmation)
-            ts = fetch_term_structure()
-            oas, _ = fetch_fred_series("BAMLH0A0HYM2")
-            score = risk_confirmation(ts["backwardation"], oas)
-            mpath = Path("logs/shadow_macro.csv")
-            new = not mpath.exists()
-            with open(mpath, "a", newline="") as f:
-                w = _csv.writer(f)
-                if new:
-                    w.writerow(["date", "vix_ratio", "backwardation", "hy_oas", "risk_confirm"])
-                w.writerow([str(feats.index[-1])[:10], round(ts["ratio"], 4),
-                            ts["backwardation"], oas, round(score, 4)])
-            tlog.log(tlog.main, "shadow_macro",
-                     f"vix_ratio={ts['ratio']:.2f} backwardation={ts['backwardation']} "
-                     f"hy_oas={oas} risk_confirm={score:.2f}")
-        except Exception as exc:  # noqa: BLE001 - shadow must never break the rebalance
-            logging.getLogger(__name__).warning("shadow macro log failed (non-fatal): %s", exc)
+    # Shadow regime (T1.1 Jump Model + T1.2 BOCPD) and macro risk-confirmation (T1.3
+    # VIX term structure + FRED HY OAS) logging is decoupled to `run_shadow_log`
+    # (--shadow-log). Those fits and feed fetches previously ran HERE, upstream of order
+    # submission, so a slow/hung yfinance/FRED call could delay or (no-timeout) block the
+    # paper rebalance. Keep run_shadow_log's baseline vol_rank + history depth in sync so
+    # logs/shadow_regime.csv stays continuous across the cutover.
     tv = float(src.get("target_vol", 0.12))
     vw = int(src.get("vol_window", 126))
     gc = float(src.get("gross_cap", 1.0))
@@ -1611,6 +1563,139 @@ def run_rebalance(config: dict[str, Any], credentials: dict[str, str],
     Path(snap_path).write_text(json.dumps(snapshot, indent=2, default=str))
     tlog.log(tlog.main, "book_snapshot", f"wrote {snap_path}")
     return plan
+
+
+def run_shadow_log(config: dict[str, Any], credentials: dict[str, str],
+                   symbols: Optional[list[str]] = None,
+                   log_dir: str = "logs") -> None:  # pragma: no cover - live feeds/broker history
+    """Standalone shadow-signal logger (T0.4/T1.1/T1.2/T1.3), decoupled from the executor.
+
+    Runs the three measurement-only shadow studies that previously lived INLINE in
+    ``run_once`` / ``run_rebalance``:
+
+      1. HMM-vs-JumpModel + BOCPD vol-regime agreement  -> ``shadow_regime.csv``
+      2. macro risk-confirmation (VIX term structure + FRED HY OAS) -> ``shadow_macro.csv``
+      3. champion-vs-refit equivalence, retrain-due days only -> ``shadow_refit.csv``
+
+    Why decoupled: inline, these blocks ran BEFORE order submission, so a slow or hung
+    yfinance/FRED fetch (no exception for the try/except to catch) could sit upstream of
+    the paper rebalance / daily cycle. Here it is read-only — it pulls price history and
+    free macro feeds only, never reads the account for sizing and NEVER submits an order —
+    so a feed failure logs and moves on without ever touching trading. Schedule on its own
+    cadence (``deploy/com.regimetrader.shadowlog.plist``, weekdays).
+
+    Continuity invariant: the regime block must reproduce ``run_rebalance``'s baseline
+    ``vol_rank`` (overlay ``hmm`` => champion argmax) and history depth byte-for-byte so
+    ``shadow_regime.csv`` is continuous across the cutover. The three sections are
+    independent try/except islands — one failing feed never skips the others.
+
+    Args:
+        config: Parsed settings.
+        credentials: Broker credentials (read-only history access).
+        symbols: Optional override for the refit-equivalence symbol set (default
+            ``broker.symbols``).
+        log_dir: Directory for the shadow CSVs (overridable for isolated testing).
+    """
+    import csv as _csv
+
+    from broker.alpaca_client import AlpacaClient, AlpacaConfig
+    from core.hmm_engine import HMMEngine
+    from core.meta_overlay import vol_rank_for_overlay
+    from core.model_registry import ModelRegistry
+    from core.regime_strategies import StrategyOrchestrator
+    from data.feature_engineering import FeatureEngineer
+    from data.market_data import MarketData
+    from monitoring.logger import LoggerConfig, setup_logging
+
+    tlog = setup_logging(LoggerConfig(log_dir=log_dir))
+    hmm_cfg, strat_cfg, _ = _core_configs(config)
+    cs = config.get("cross_sectional", {})
+    proxy = cs.get("proxy", "SPY")
+    lookback = int(cs.get("lookback", 252))
+    skip = int(cs.get("skip", 21))
+    timeframe = config.get("broker", {}).get("timeframe", "1Day")
+    registry = ModelRegistry(MODEL_DIR)
+    fe = FeatureEngineer()
+
+    # --- T1.1/T1.2 regime shadow: HMM-vs-JumpModel + BOCPD on the proxy. -------------
+    # Uses the SAME Alpaca history + pinned champion + overlay as run_rebalance's
+    # baseline so the recorded vol_rank is identical to what the book would have logged.
+    try:
+        from core.changepoint import changepoint_score
+        from core.jump_model import JumpModel
+        from core.shadow_regime import append_row as regime_append, make_row
+
+        paper = str(credentials.get("paper", "true")).lower() != "false"
+        client = AlpacaClient(AlpacaConfig(credentials["api_key"],
+                                           credentials["secret_key"], paper=paper))
+        client.connect()
+        md = MarketData(client)
+        hmm, _ = load_pinned_champion(
+            registry, proxy, f"{MODEL_DIR}/hmm_{proxy}.pkl", lambda: run_train(config, [proxy]))
+        orch = StrategyOrchestrator(strat_cfg, hmm.regime_info)
+        proxy_hist = md.get_history(proxy, timeframe, lookback + skip + 300)
+        feats = fe.build_features(proxy_hist)
+        states = hmm.predict_regime_filtered(feats)
+        last = states[-1]
+        ov = str(cs.get("overlay", "hmm"))
+        vol_rank = vol_rank_for_overlay(ov, last.state_probabilities, last.state_id,
+                                        orch.vol_rank)
+        jm = JumpModel(n_states=hmm.n_regimes, jump_penalty=30.0, random_state=42).fit(feats)
+        cp = changepoint_score(proxy_hist["close"].pct_change().dropna().to_numpy())
+        regime_append(f"{log_dir}/shadow_regime.csv",
+                      make_row(str(feats.index[-1])[:10], vol_rank, jm.vol_rank(), bocpd_cp=cp))
+        tlog.log(tlog.main, "shadow_regime",
+                 f"hmm_vol_rank={vol_rank} jm_vol_rank={jm.vol_rank()} bocpd_cp={cp:.3f} "
+                 f"-> {log_dir}/shadow_regime.csv")
+    except Exception as exc:  # noqa: BLE001 - shadow must never break (read-only job)
+        logging.getLogger(__name__).warning("shadow regime log failed (non-fatal): %s", exc)
+
+    # --- T1.3 macro risk-confirmation: VIX term structure + FRED HY OAS. -------------
+    # Risk CONFIRMATION only — NEVER enters the HMM panel (that would mutate the frozen
+    # gate); logged separately for the shadow study.
+    try:
+        from data.macro_features import (fetch_fred_series, fetch_term_structure,
+                                         risk_confirmation)
+        ts = fetch_term_structure()
+        oas, _ = fetch_fred_series("BAMLH0A0HYM2")
+        score = risk_confirmation(ts["backwardation"], oas)
+        mpath = Path(f"{log_dir}/shadow_macro.csv")
+        new = not mpath.exists()
+        with open(mpath, "a", newline="") as f:
+            w = _csv.writer(f)
+            if new:
+                w.writerow(["date", "vix_ratio", "backwardation", "hy_oas", "risk_confirm"])
+            w.writerow([datetime.now(timezone.utc).date().isoformat(), round(ts["ratio"], 4),
+                        ts["backwardation"], oas, round(score, 4)])
+        tlog.log(tlog.main, "shadow_macro",
+                 f"vix_ratio={ts['ratio']:.2f} backwardation={ts['backwardation']} "
+                 f"hy_oas={oas} risk_confirm={score:.2f}")
+    except Exception as exc:  # noqa: BLE001 - shadow must never break (read-only job)
+        logging.getLogger(__name__).warning("shadow macro log failed (non-fatal): %s", exc)
+
+    # --- T0.4 dual-log: champion-vs-refit equivalence, retrain-due days only. --------
+    # Where the old age-based rule would have refit, fit a throwaway shadow HMM and log
+    # agreement instead of swapping the pinned champion.
+    syms = symbols or config.get("broker", {}).get("symbols", [])
+    if syms and bool(config.get("hmm", {}).get("dual_log_refit", True)):
+        symbol = syms[0]
+        model_path = f"{MODEL_DIR}/hmm_{symbol}.pkl"
+        if _needs_retrain(registry.champion_path(symbol) or model_path):
+            try:
+                from core.shadow_refit import append_row as refit_append, compare_engines
+                from data.market_data import load_ohlcv
+                hmm_sym, _ = load_pinned_champion(
+                    registry, symbol, model_path, lambda: run_train(config, syms))
+                shadow_feats = fe.build_features(load_ohlcv(symbol, timeframe=timeframe))
+                shadow = HMMEngine(hmm_cfg)
+                shadow.fit(shadow_feats)
+                row = compare_engines(hmm_sym, shadow, shadow_feats)
+                refit_append(f"{log_dir}/shadow_refit.csv", row)
+                tlog.log(tlog.main, "shadow_refit",
+                         f"agree={row['agree']} champion={row['champion_regime']} "
+                         f"shadow={row['shadow_regime']} -> {log_dir}/shadow_refit.csv")
+            except Exception as exc:  # noqa: BLE001 - measurement must never block
+                logging.getLogger(__name__).warning("shadow refit failed (non-fatal): %s", exc)
 
 
 def run_drift_check(config: dict[str, Any], credentials: dict[str, str]) -> None:  # pragma: no cover - live broker/market
@@ -2145,6 +2230,10 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     mode.add_argument("--verify-evidence", action="store_true", dest="verify_evidence",
                       help="walk the evidence hash-chain and report the first "
                            "broken link, if any (gap-6 tamper-evidence audit)")
+    mode.add_argument("--shadow-log", action="store_true", dest="shadow_log",
+                      help="log the shadow signals (HMM-vs-JumpModel+BOCPD, macro "
+                           "VIX/FRED, champion-vs-refit) decoupled from the executor; "
+                           "read-only, never trades (schedule weekdays; T0.4/T1.1-1.3)")
     mode.add_argument("--shadow-report", action="store_true", dest="shadow_report",
                       help="generate the monthly HMM-vs-JumpModel shadow regime "
                            "report from logs/shadow_regime.csv (T1.4)")
@@ -2216,6 +2305,8 @@ def main(argv: Optional[list[str]] = None) -> None:
         print(f"evidence chain: {'OK' if ok else f'BROKEN at row {bad}'} ({EVIDENCE_CHAIN})")
         if not ok:
             raise SystemExit(1)
+    elif args.shadow_log:
+        run_shadow_log(config, load_credentials(), symbols)
     elif args.shadow_report:
         from core.shadow_regime import monthly_report, report_markdown
         month = (args.end or datetime.now(timezone.utc).date().isoformat())[:7]
