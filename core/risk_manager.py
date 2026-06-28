@@ -73,7 +73,7 @@ class RiskConfig:
     max_risk_per_trade: float = 0.01
     max_leverage: float = 1.25          # gross-leverage ceiling (H4: now the sole cap)
     max_single_position: float = 0.15
-    max_concurrent: int = 5
+    max_concurrent: int = 50          # synced with config risk.max_concurrent (2026-06-28)
     max_daily_trades: int = 20
     daily_dd_reduce: float = 0.02
     daily_dd_halt: float = 0.03

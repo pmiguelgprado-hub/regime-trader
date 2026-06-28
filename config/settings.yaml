@@ -177,7 +177,7 @@ risk:
   max_risk_per_trade: 0.01          # frac of equity risked per trade (1%)
   max_leverage: 1.25                # gross-leverage ceiling, reachable (H4)
   max_single_position: 0.15         # max weight of any single symbol
-  max_concurrent: 5                 # max simultaneous open positions
+  max_concurrent: 50                # max simultaneous open positions (synced with cross_sectional.max_concurrent; see bugfix 2026-06-28)
   max_daily_trades: 20              # daily order cap (overtrading guard)
   daily_dd_reduce: 0.02             # daily drawdown -> reduce sizing (2%)
   daily_dd_halt: 0.03               # daily drawdown -> halt trading (3%)
